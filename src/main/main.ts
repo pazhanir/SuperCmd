@@ -1399,6 +1399,12 @@ const keyspyActiveShortcutIds = new Set<string>();
 let keyspyHyperPressed = false;
 let keyspyHyperUsedAsModifier = false;
 let keyspyLastServerPath = '';
+let keyspyLastRuntimeInfo = '';
+let keyspyPermissionRecoveryInFlight = false;
+let keyspyAccessibilityPromptRequested = false;
+let keyspyInputMonitoringPromptRequested = false;
+let keyspyPermissionDialogShown = false;
+let keyspyRetryTimer: NodeJS.Timeout | null = null;
 let keyspyHyperConfig: KeyspyHyperConfig = {
   sourceKeyCode: null,
   includeShift: true,
@@ -4467,6 +4473,128 @@ function shortcutRequiresKeyspy(shortcut: string): boolean {
   return !isElectronShortcutSupported(normalized);
 }
 
+function hasAnyConfiguredKeyspyShortcut(): boolean {
+  const launcherShortcut = String(currentShortcut || '').trim();
+  if (launcherShortcut && shortcutRequiresKeyspy(launcherShortcut)) return true;
+  for (const shortcut of registeredHotkeys.keys()) {
+    if (shortcutRequiresKeyspy(shortcut)) return true;
+  }
+  return false;
+}
+
+function openMacPrivacySettingsPane(target: 'accessibility' | 'input-monitoring'): void {
+  if (process.platform !== 'darwin') return;
+  const urls = target === 'accessibility'
+    ? [
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+        'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility',
+      ]
+    : [
+        'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent',
+        'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent',
+      ];
+  (async () => {
+    for (const url of urls) {
+      try {
+        await shell.openExternal(url);
+        return;
+      } catch {}
+    }
+    try {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security');
+    } catch {}
+  })();
+}
+
+function scheduleKeyspyListenerRetry(delayMs: number = 1800): void {
+  if (keyspyRetryTimer) {
+    clearTimeout(keyspyRetryTimer);
+  }
+  keyspyRetryTimer = setTimeout(() => {
+    keyspyRetryTimer = null;
+    void (async () => {
+      const ready = await ensureKeyspyListener();
+      if (!ready) return;
+      if (currentShortcut) {
+        try { registerGlobalShortcut(currentShortcut); } catch {}
+      } else {
+        rebuildKeyspyShortcutSpecs();
+      }
+    })();
+  }, Math.max(500, delayMs));
+}
+
+async function recoverKeyspyMacPermissions(reason: string): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (keyspyPermissionRecoveryInFlight) return;
+  if (!hasAnyConfiguredKeyspyShortcut() && !keyspyHotkeyCaptureSession) return;
+
+  keyspyPermissionRecoveryInFlight = true;
+  try {
+    let accessibilityGranted = true;
+    try {
+      accessibilityGranted = systemPreferences.isTrustedAccessibilityClient(false);
+    } catch {
+      accessibilityGranted = false;
+    }
+
+    let inputMonitoringGranted = true;
+    try {
+      inputMonitoringGranted = await checkInputMonitoringAccess();
+    } catch {
+      inputMonitoringGranted = false;
+    }
+
+    if (!accessibilityGranted && !keyspyAccessibilityPromptRequested) {
+      keyspyAccessibilityPromptRequested = true;
+      try {
+        systemPreferences.isTrustedAccessibilityClient(true);
+      } catch {}
+    }
+
+    if (!inputMonitoringGranted && !keyspyInputMonitoringPromptRequested) {
+      keyspyInputMonitoringPromptRequested = true;
+      const binaryPath = ensureInputMonitoringRequestBinary();
+      if (binaryPath) {
+        try {
+          const { spawn } = require('child_process') as typeof import('child_process');
+          spawn(binaryPath, [], { stdio: ['ignore', 'ignore', 'ignore'], detached: true }).unref();
+        } catch {}
+      }
+    }
+
+    if ((!accessibilityGranted || !inputMonitoringGranted) && !keyspyPermissionDialogShown) {
+      keyspyPermissionDialogShown = true;
+      try {
+        const result = await dialog.showMessageBox({
+          type: 'info',
+          buttons: ['Open Privacy Settings', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+          title: 'Enable Permissions for Hyper/Fn Hotkeys',
+          message: 'SuperCmd needs Accessibility and Input Monitoring permissions for Hyper/Fn shortcuts.',
+          detail: [
+            '1. Enable SuperCmd in Privacy & Security > Accessibility.',
+            '2. Enable SuperCmd in Privacy & Security > Input Monitoring.',
+            '',
+            `Reason: ${reason}`,
+          ].join('\n'),
+        });
+        if (result.response === 0) {
+          openMacPrivacySettingsPane('accessibility');
+          setTimeout(() => openMacPrivacySettingsPane('input-monitoring'), 700);
+        }
+      } catch {}
+    }
+
+    // Re-check soon after the system prompts/settings navigation.
+    scheduleKeyspyListenerRetry(2200);
+  } finally {
+    keyspyPermissionRecoveryInFlight = false;
+  }
+}
+
 function clearElectronFallbackShortcuts(): void {
   for (const shortcut of electronFallbackRegisteredShortcuts.keys()) {
     try { globalShortcut.unregister(shortcut); } catch {}
@@ -5124,6 +5252,7 @@ async function ensureKeyspyListener(): Promise<boolean> {
     keyspyLastServerPath = keyspyServerPath || '';
     if (process.platform === 'darwin' && app.isPackaged && !keyspyServerPath) {
       console.error('[Hotkey][keyspy] Runtime server binary not found in packaged app.');
+      void recoverKeyspyMacPermissions('runtime-binary-missing');
     }
     const handleRuntimeError = (errorCode: number | null): void => {
       const code = Number.isFinite(Number(errorCode)) ? Number(errorCode) : null;
@@ -5139,23 +5268,38 @@ async function ensureKeyspyListener(): Promise<boolean> {
         try { listener.kill(); } catch {}
         resetKeyspyListenerState();
         rebuildKeyspyShortcutSpecs();
+        void recoverKeyspyMacPermissions(`runtime-exit-${String(code ?? 'unknown')}`);
         return;
       }
       exitedDuringStartup = true;
       startupExitCode = code;
+      void recoverKeyspyMacPermissions(`startup-exit-${String(code ?? 'unknown')}`);
+    };
+    const handleRuntimeInfo = (info: string): void => {
+      const text = String(info || '').trim();
+      if (!text) return;
+      if (text === keyspyLastRuntimeInfo) return;
+      keyspyLastRuntimeInfo = text;
+      console.warn('[Hotkey][keyspy][runtime]', text);
+      if (text.toLowerCase().includes('failed to create event tap')) {
+        void recoverKeyspyMacPermissions('event-tap-permission');
+      }
     };
     listener = new GlobalKeyboardListener({
       appName: 'SuperCmd',
       windows: {
         onError: handleRuntimeError,
+        onInfo: handleRuntimeInfo,
       },
       mac: {
         appName: 'SuperCmd',
         onError: handleRuntimeError,
+        onInfo: handleRuntimeInfo,
         ...(keyspyServerPath ? { serverPath: keyspyServerPath } : {}),
       },
       x11: {
         onError: handleRuntimeError,
+        onInfo: handleRuntimeInfo,
       },
       disposeDelay: -1,
     });
@@ -5234,6 +5378,7 @@ async function ensureKeyspyListener(): Promise<boolean> {
     console.error('[Hotkey][keyspy] Failed to initialize global listener:', error);
     resetKeyspyListenerState();
     rebuildKeyspyShortcutSpecs();
+    void recoverKeyspyMacPermissions('listener-init-failed');
     return false;
   }
 }
@@ -5248,6 +5393,10 @@ function stopKeyspyListener(): void {
   try {
     keyspyListener?.kill();
   } catch {}
+  if (keyspyRetryTimer) {
+    clearTimeout(keyspyRetryTimer);
+    keyspyRetryTimer = null;
+  }
   resetKeyspyListenerState();
   keyspyLastServerPath = '';
   clearElectronFallbackShortcuts();
@@ -9453,6 +9602,7 @@ app.whenReady().then(async () => {
   const keyspyReady = await ensureKeyspyListener();
   if (!keyspyReady) {
     globalShortcutRegistrationState.ok = false;
+    void recoverKeyspyMacPermissions('app-startup');
   }
   // Daily background update check (once every 24h).
   void runBackgroundAppUpdaterCheck();
@@ -12876,6 +13026,10 @@ if let tiff = image?.tiffRepresentation {
   }
 
   app.on('activate', () => {
+    if (!keyspyListener && hasAnyConfiguredKeyspyShortcut()) {
+      scheduleKeyspyListenerRetry(250);
+    }
+
     // During onboarding the window is shown but may lose visual focus to a system
     // permission dialog (e.g. "SuperCmd wants access to control System Events").
     // When the user dismisses the dialog, macOS activates SuperCmd and we get this
