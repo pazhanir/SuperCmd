@@ -121,6 +121,51 @@ function getNativeBinaryPath(name: string): string {
   return resolvePackagedUnpackedPath(base);
 }
 
+const KEYSPY_STAGED_RUNTIME_DIR = path.join('native-runtime', 'keyspy');
+let resolvedKeyspyServerPathCache: string | null = null;
+
+function ensureExecutablePermissions(filePath: string): void {
+  if (!filePath || process.platform === 'win32') return;
+  try { fs.chmodSync(filePath, 0o755); } catch {}
+}
+
+function stagePackagedKeyspyServerBinary(sourcePath: string, binaryName: string): string {
+  if (!app.isPackaged || process.platform !== 'darwin') return sourcePath;
+  if (!sourcePath || !binaryName) return sourcePath;
+
+  try {
+    const userDataPath = app.getPath('userData');
+    const stageDir = path.join(userDataPath, KEYSPY_STAGED_RUNTIME_DIR);
+    const targetPath = path.join(stageDir, binaryName);
+    const sourceStat = fs.statSync(sourcePath);
+    let shouldCopy = true;
+
+    try {
+      const targetStat = fs.statSync(targetPath);
+      shouldCopy = targetStat.size !== sourceStat.size || targetStat.mtimeMs < sourceStat.mtimeMs;
+    } catch {
+      shouldCopy = true;
+    }
+
+    if (shouldCopy) {
+      fs.mkdirSync(stageDir, { recursive: true });
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+
+    ensureExecutablePermissions(targetPath);
+    try {
+      const { spawnSync } = require('child_process');
+      spawnSync('/usr/bin/xattr', ['-d', 'com.apple.quarantine', targetPath], {
+        stdio: 'ignore',
+      });
+    } catch {}
+    return targetPath;
+  } catch (error) {
+    console.warn('[Hotkey][keyspy] Failed to stage runtime binary:', error);
+    return sourcePath;
+  }
+}
+
 function getKeyspyRuntimeBinaryName(): string | null {
   if (process.platform === 'darwin') return 'MacKeyServer';
   if (process.platform === 'win32') return 'WinKeyServer.exe';
@@ -129,10 +174,22 @@ function getKeyspyRuntimeBinaryName(): string | null {
 }
 
 function resolveKeyspyServerPath(): string | undefined {
+  if (resolvedKeyspyServerPathCache) {
+    try {
+      if (fs.existsSync(resolvedKeyspyServerPathCache)) {
+        ensureExecutablePermissions(resolvedKeyspyServerPathCache);
+        return resolvedKeyspyServerPathCache;
+      }
+    } catch {}
+    resolvedKeyspyServerPathCache = null;
+  }
+
   const binaryName = getKeyspyRuntimeBinaryName();
   if (!binaryName) return undefined;
 
   const candidates = new Set<string>();
+  candidates.add(getNativeBinaryPath(path.join('keyspy', binaryName)));
+
   const appPath = (() => {
     try {
       return String(app.getAppPath() || '').trim();
@@ -158,10 +215,11 @@ function resolveKeyspyServerPath(): string | undefined {
   for (const candidate of candidates) {
     try {
       if (!candidate || !fs.existsSync(candidate)) continue;
-      if (process.platform !== 'win32') {
-        try { fs.chmodSync(candidate, 0o755); } catch {}
-      }
-      return candidate;
+      ensureExecutablePermissions(candidate);
+      const preferredPath = stagePackagedKeyspyServerBinary(candidate, binaryName);
+      ensureExecutablePermissions(preferredPath);
+      resolvedKeyspyServerPathCache = preferredPath;
+      return preferredPath;
     } catch {}
   }
   return undefined;
@@ -1340,6 +1398,7 @@ const keyspyShortcutSpecs = new Map<string, KeyspyShortcutSpec>();
 const keyspyActiveShortcutIds = new Set<string>();
 let keyspyHyperPressed = false;
 let keyspyHyperUsedAsModifier = false;
+let keyspyLastServerPath = '';
 let keyspyHyperConfig: KeyspyHyperConfig = {
   sourceKeyCode: null,
   includeShift: true,
@@ -5043,25 +5102,64 @@ function rebuildKeyspyShortcutSpecs(): void {
   syncElectronFallbackShortcuts();
 }
 
+function resetKeyspyListenerState(): void {
+  keyspyListener = null;
+  keyspyListenerCallback = null;
+  keyspyShortcutSpecs.clear();
+  keyspyActiveShortcutIds.clear();
+  keyspyHyperPressed = false;
+  keyspyHyperUsedAsModifier = false;
+}
+
 async function ensureKeyspyListener(): Promise<boolean> {
   if (keyspyListener && keyspyListenerCallback) {
     return true;
   }
   let listener: GlobalKeyboardListener | null = null;
+  let callback: ((event: IGlobalKeyEvent, down: IGlobalKeyDownMap) => boolean) | null = null;
+  let exitedDuringStartup = false;
+  let startupExitCode: number | null = null;
   try {
     const keyspyServerPath = resolveKeyspyServerPath();
+    keyspyLastServerPath = keyspyServerPath || '';
     if (process.platform === 'darwin' && app.isPackaged && !keyspyServerPath) {
       console.error('[Hotkey][keyspy] Runtime server binary not found in packaged app.');
     }
+    const handleRuntimeError = (errorCode: number | null): void => {
+      const code = Number.isFinite(Number(errorCode)) ? Number(errorCode) : null;
+      if (keyspyListener === listener && listener) {
+        console.error('[Hotkey][keyspy] Runtime exited while active.', {
+          code,
+          serverPath: keyspyLastServerPath || undefined,
+        });
+        cancelKeyspyHotkeyCapture('listener-crashed');
+        try {
+          if (callback) listener.removeListener(callback);
+        } catch {}
+        try { listener.kill(); } catch {}
+        resetKeyspyListenerState();
+        rebuildKeyspyShortcutSpecs();
+        return;
+      }
+      exitedDuringStartup = true;
+      startupExitCode = code;
+    };
     listener = new GlobalKeyboardListener({
       appName: 'SuperCmd',
+      windows: {
+        onError: handleRuntimeError,
+      },
       mac: {
         appName: 'SuperCmd',
+        onError: handleRuntimeError,
         ...(keyspyServerPath ? { serverPath: keyspyServerPath } : {}),
+      },
+      x11: {
+        onError: handleRuntimeError,
       },
       disposeDelay: -1,
     });
-    const callback = (event: IGlobalKeyEvent, down: IGlobalKeyDownMap): boolean => {
+    callback = (event: IGlobalKeyEvent, down: IGlobalKeyDownMap): boolean => {
       let stopPropagation = false;
       const captureSessionActive = Boolean(keyspyHotkeyCaptureSession);
       if (captureSessionActive) {
@@ -5124,12 +5222,18 @@ async function ensureKeyspyListener(): Promise<boolean> {
     keyspyListener = listener;
     keyspyListenerCallback = callback;
     rebuildKeyspyShortcutSpecs();
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    if (exitedDuringStartup || keyspyListener !== listener || !keyspyListenerCallback) {
+      throw new Error(
+        `runtime exited during startup${startupExitCode !== null ? ` (code ${startupExitCode})` : ''}`
+      );
+    }
     return true;
   } catch (error) {
     try { listener?.kill(); } catch {}
     console.error('[Hotkey][keyspy] Failed to initialize global listener:', error);
-    keyspyListener = null;
-    keyspyListenerCallback = null;
+    resetKeyspyListenerState();
+    rebuildKeyspyShortcutSpecs();
     return false;
   }
 }
@@ -5144,12 +5248,8 @@ function stopKeyspyListener(): void {
   try {
     keyspyListener?.kill();
   } catch {}
-  keyspyListener = null;
-  keyspyListenerCallback = null;
-  keyspyShortcutSpecs.clear();
-  keyspyActiveShortcutIds.clear();
-  keyspyHyperPressed = false;
-  keyspyHyperUsedAsModifier = false;
+  resetKeyspyListenerState();
+  keyspyLastServerPath = '';
   clearElectronFallbackShortcuts();
 }
 
