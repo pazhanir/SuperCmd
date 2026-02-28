@@ -121,6 +121,52 @@ function getNativeBinaryPath(name: string): string {
   return resolvePackagedUnpackedPath(base);
 }
 
+function getKeyspyRuntimeBinaryName(): string | null {
+  if (process.platform === 'darwin') return 'MacKeyServer';
+  if (process.platform === 'win32') return 'WinKeyServer.exe';
+  if (process.platform === 'linux') return 'X11KeyServer';
+  return null;
+}
+
+function resolveKeyspyServerPath(): string | undefined {
+  const binaryName = getKeyspyRuntimeBinaryName();
+  if (!binaryName) return undefined;
+
+  const candidates = new Set<string>();
+  const appPath = (() => {
+    try {
+      return String(app.getAppPath() || '').trim();
+    } catch {
+      return '';
+    }
+  })();
+
+  candidates.add(path.join(process.cwd(), 'node_modules', 'keyspy', 'runtime', binaryName));
+
+  if (appPath) {
+    const fromAppPath = path.join(appPath, 'node_modules', 'keyspy', 'runtime', binaryName);
+    candidates.add(fromAppPath);
+    candidates.add(resolvePackagedUnpackedPath(fromAppPath));
+  }
+
+  const resourcesPath = String(process.resourcesPath || '').trim();
+  if (resourcesPath) {
+    candidates.add(path.join(resourcesPath, 'node_modules', 'keyspy', 'runtime', binaryName));
+    candidates.add(path.join(resourcesPath, 'app.asar.unpacked', 'node_modules', 'keyspy', 'runtime', binaryName));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (!candidate || !fs.existsSync(candidate)) continue;
+      if (process.platform !== 'win32') {
+        try { fs.chmodSync(candidate, 0o755); } catch {}
+      }
+      return candidate;
+    } catch {}
+  }
+  return undefined;
+}
+
 type WindowManagementLayoutItem = {
   id: string;
   bounds?: {
@@ -4892,9 +4938,16 @@ async function ensureKeyspyListener(): Promise<boolean> {
   }
   let listener: GlobalKeyboardListener | null = null;
   try {
+    const keyspyServerPath = resolveKeyspyServerPath();
+    if (process.platform === 'darwin' && app.isPackaged && !keyspyServerPath) {
+      console.error('[Hotkey][keyspy] Runtime server binary not found in packaged app.');
+    }
     listener = new GlobalKeyboardListener({
       appName: 'SuperCmd',
-      mac: { appName: 'SuperCmd' },
+      mac: {
+        appName: 'SuperCmd',
+        ...(keyspyServerPath ? { serverPath: keyspyServerPath } : {}),
+      },
       disposeDelay: -1,
     });
     const callback = (event: IGlobalKeyEvent, down: IGlobalKeyDownMap): boolean => {
