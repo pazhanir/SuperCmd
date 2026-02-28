@@ -4402,6 +4402,12 @@ function isElectronShortcutSupported(shortcut: string): boolean {
   return true;
 }
 
+function shortcutRequiresKeyspy(shortcut: string): boolean {
+  const normalized = normalizeAccelerator(shortcut);
+  if (!normalized) return false;
+  return !isElectronShortcutSupported(normalized);
+}
+
 function clearElectronFallbackShortcuts(): void {
   for (const shortcut of electronFallbackRegisteredShortcuts.keys()) {
     try { globalShortcut.unregister(shortcut); } catch {}
@@ -9186,7 +9192,8 @@ function registerGlobalShortcut(shortcut: string): boolean {
   }
 
   const launcherSpec = parseKeyspyShortcutSpec('launcher', normalizedShortcut, 'launcher');
-  if (!launcherSpec) {
+  const canFallbackToElectron = isElectronShortcutSupported(normalizedShortcut);
+  if (!launcherSpec && !canFallbackToElectron) {
     globalShortcutRegistrationState.activeShortcut = '';
     globalShortcutRegistrationState.ok = false;
     return false;
@@ -9194,8 +9201,23 @@ function registerGlobalShortcut(shortcut: string): boolean {
 
   currentShortcut = normalizedShortcut;
   globalShortcutRegistrationState.activeShortcut = normalizedShortcut;
-  globalShortcutRegistrationState.ok = Boolean(keyspyListener);
   rebuildKeyspyShortcutSpecs();
+  const keyspyRegistered = Boolean(launcherSpec && keyspyListener);
+  let electronRegistered = electronFallbackRegisteredShortcuts.get(normalizedShortcut) === 'launcher';
+  if (
+    !keyspyRegistered &&
+    !electronRegistered &&
+    process.platform === 'darwin' &&
+    normalizedShortcut === 'Command+Space' &&
+    canFallbackToElectron
+  ) {
+    const disabled = disableMacSpotlightShortcuts();
+    if (disabled) {
+      syncElectronFallbackShortcuts();
+      electronRegistered = electronFallbackRegisteredShortcuts.get(normalizedShortcut) === 'launcher';
+    }
+  }
+  globalShortcutRegistrationState.ok = keyspyRegistered || electronRegistered;
   console.log(`Launcher shortcut configured: ${normalizedShortcut}`);
   return globalShortcutRegistrationState.ok;
 }
@@ -9207,9 +9229,8 @@ function registerCommandHotkeys(hotkeys: Record<string, string>): void {
     const shortcut = String(shortcutRaw || '').trim();
     if (!shortcut) continue;
     const normalizedShortcut = normalizeAccelerator(shortcut);
-    const spec = parseKeyspyShortcutSpec(`command:${commandId}`, normalizedShortcut, 'command', commandId);
-    if (!spec) continue;
-    registeredHotkeys.set(spec.shortcut, commandId);
+    if (!normalizedShortcut) continue;
+    registeredHotkeys.set(normalizedShortcut, commandId);
   }
 
   rebuildKeyspyShortcutSpecs();
@@ -9793,9 +9814,18 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     'update-global-shortcut',
     async (_event: any, newShortcut: string) => {
-      const listenerReady = await ensureKeyspyListener();
-      if (!listenerReady) {
-        return false;
+      const normalizedShortcut = normalizeAccelerator(newShortcut);
+      if (!normalizedShortcut) return false;
+      const requiresKeyspy = shortcutRequiresKeyspy(normalizedShortcut);
+      if (requiresKeyspy) {
+        const listenerReady = await ensureKeyspyListener();
+        if (!listenerReady) {
+          return false;
+        }
+      } else if (!keyspyListener) {
+        // Best effort: keep keyspy features when available, but do not block
+        // standard accelerators on environments where keyspy cannot start.
+        void ensureKeyspyListener();
       }
       const success = registerGlobalShortcut(newShortcut);
       if (success) {
@@ -9886,13 +9916,19 @@ app.whenReady().then(async () => {
           }
         }
 
-        const parsed = parseKeyspyShortcutSpec(`command:${commandId}`, normalizedHotkey, 'command', commandId);
-        if (!parsed) {
-          return { success: false, error: 'unavailable' as const };
-        }
-        const listenerReady = await ensureKeyspyListener();
-        if (!listenerReady) {
-          return { success: false, error: 'unavailable' as const };
+        const requiresKeyspy = shortcutRequiresKeyspy(normalizedHotkey);
+        if (requiresKeyspy) {
+          const parsed = parseKeyspyShortcutSpec(`command:${commandId}`, normalizedHotkey, 'command', commandId);
+          if (!parsed) {
+            return { success: false, error: 'unavailable' as const };
+          }
+          const listenerReady = await ensureKeyspyListener();
+          if (!listenerReady) {
+            return { success: false, error: 'unavailable' as const };
+          }
+        } else if (!keyspyListener) {
+          // Do not block standard accelerators if keyspy fails to start.
+          void ensureKeyspyListener();
         }
         hotkeys[commandId] = trimmedHotkey;
       } else {
