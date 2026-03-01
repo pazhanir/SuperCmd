@@ -2,6 +2,8 @@ import Swift
 import Darwin.C
 import Foundation
 import CoreGraphics
+import IOKit
+import IOKit.hidsystem
 
 let timeoutTime: Int64 = 30
 let syntheticEventUserData: Int64 = 0x5355434D44595052
@@ -26,6 +28,7 @@ var responseId: Int64 = 0
 var timeoutId: Int64 = 0
 var curId: Int64 = 0
 var output: String = ""
+let eventStatusHandle: NXEventHandle = NXOpenEventStatus()
 
 func getMillis() -> Int64 {
     return Int64(NSDate().timeIntervalSince1970 * 1000)
@@ -94,41 +97,35 @@ func isSyntheticEvent(_ event: CGEvent) -> Bool {
 }
 
 func currentCapsLockState() -> Bool {
+    if eventStatusHandle != NXEventHandle(MACH_PORT_NULL) {
+        var state = false
+        let result = IOHIDGetModifierLockState(eventStatusHandle, Int32(kIOHIDCapsLockState), &state)
+        if result == KERN_SUCCESS {
+            return state
+        }
+    }
     return CGEventSource.flagsState(.combinedSessionState).contains(.maskAlphaShift)
 }
 
 var lastKnownCapsLockLockedState = currentCapsLockState()
+var capsLockPhysicalDown = false
 
-func currentCapsLockPhysicalDownState() -> Bool {
-    if CGEventSource.keyState(.hidSystemState, key: CGKeyCode(VK_CAPSLOCK)) {
-        return true
+func applyCapsLockState(_ locked: Bool) {
+    if eventStatusHandle != NXEventHandle(MACH_PORT_NULL) {
+        let result = IOHIDSetModifierLockState(eventStatusHandle, Int32(kIOHIDCapsLockState), locked)
+        if result == KERN_SUCCESS {
+            return
+        }
+        logErr("Failed to set Caps Lock state via IOHIDSetModifierLockState: \(result)")
     }
-    return CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(VK_CAPSLOCK))
-}
-
-func postSyntheticCapsLockToggle() {
-    guard let source = CGEventSource(stateID: .combinedSessionState) ?? CGEventSource(stateID: .hidSystemState) else {
-        logErr("Failed to create synthetic Caps Lock event source")
-        return
-    }
-    guard let downEvent = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(VK_CAPSLOCK), keyDown: true),
-          let upEvent = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(VK_CAPSLOCK), keyDown: false) else {
-        logErr("Failed to create synthetic Caps Lock events")
-        return
-    }
-
-    downEvent.setIntegerValueField(.eventSourceUserData, value: syntheticEventUserData)
-    upEvent.setIntegerValueField(.eventSourceUserData, value: syntheticEventUserData)
-    downEvent.post(tap: .cghidEventTap)
-    upEvent.post(tap: .cghidEventTap)
 }
 
 func restoreCapsLockState(expectedLocked: Bool) {
-    DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + .milliseconds(8)) {
-        if currentCapsLockState() == expectedLocked {
-            return
+    DispatchQueue.global(qos: .userInteractive).async {
+        applyCapsLockState(expectedLocked)
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + .milliseconds(12)) {
+            applyCapsLockState(expectedLocked)
         }
-        postSyntheticCapsLockToggle()
     }
 }
 
@@ -143,7 +140,7 @@ func getModifierDownState(event: CGEvent, keyCode: Int64) -> Bool {
     case VK_LALT, VK_RALT:
         return event.flags.contains(.maskAlternate)
     case VK_CAPSLOCK:
-        return currentCapsLockPhysicalDownState()
+        return !capsLockPhysicalDown
     case VK_FN:
         return event.flags.contains(.maskSecondaryFn)
     case VK_HELP:
@@ -193,11 +190,15 @@ func myCGEventTapCallback(
         if shouldBlock {
             if keyCode == VK_CAPSLOCK {
                 restoreCapsLockState(expectedLocked: lastKnownCapsLockLockedState)
+                capsLockPhysicalDown = isDown
             }
             return nil
         }
         if keyCode == VK_CAPSLOCK && isDown {
             lastKnownCapsLockLockedState.toggle()
+        }
+        if keyCode == VK_CAPSLOCK {
+            capsLockPhysicalDown = isDown
         }
         return Unmanaged.passUnretained(event)
     }
@@ -270,3 +271,7 @@ let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap,
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
 CFRunLoopRun()
+
+if eventStatusHandle != NXEventHandle(MACH_PORT_NULL) {
+    NXCloseEventStatus(eventStatusHandle)
+}
