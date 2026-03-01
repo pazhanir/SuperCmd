@@ -4688,6 +4688,28 @@ function isAnySuperCmdWindowFocused(): boolean {
   }
 }
 
+function shouldAllowFocusedCommandHotkey(commandId: string): boolean {
+  const normalizedCommandId = String(commandId || '').trim();
+  if (!normalizedCommandId) return false;
+  if (launcherMode !== 'onboarding') return false;
+  return (
+    normalizedCommandId === 'system-supercmd-speak' ||
+    normalizedCommandId === 'system-supercmd-whisper' ||
+    normalizedCommandId === 'system-supercmd-whisper-toggle'
+  );
+}
+
+function shouldIgnoreCommandHotkeyWhileAppFocused(commandId: string): boolean {
+  if (!isAnySuperCmdWindowFocused()) return false;
+  return !shouldAllowFocusedCommandHotkey(commandId);
+}
+
+function resetHotkeyTransientState(): void {
+  clearOpeningShortcutSuppression();
+  lastHotkeyInvocation = null;
+  keyspyActiveShortcutIds.clear();
+}
+
 function isElectronShortcutSupported(shortcut: string): boolean {
   const parsed = parseShortcutModifiersAndKey(shortcut);
   if (!parsed) return false;
@@ -4815,7 +4837,10 @@ function registerElectronFallbackShortcut(
   if (electronFallbackRegisteredShortcuts.has(normalized)) return;
   try {
     const ok = globalShortcut.register(normalized, () => {
-      if (actionId.startsWith('command:') && isAnySuperCmdWindowFocused()) return;
+      if (actionId.startsWith('command:')) {
+        const commandId = actionId.replace(/^command:/, '');
+        if (shouldIgnoreCommandHotkeyWhileAppFocused(commandId)) return;
+      }
       if (shouldSuppressDuplicateHotkeyInvocation(actionId)) return;
       handler();
     });
@@ -5394,7 +5419,7 @@ function handleKeyspyShortcutPressed(spec: KeyspyShortcutSpec): void {
 
   const commandId = String(spec.commandId || '').trim();
   if (!commandId) return;
-  if (isAnySuperCmdWindowFocused()) return;
+  if (shouldIgnoreCommandHotkeyWhileAppFocused(commandId)) return;
   if (shouldSuppressDuplicateHotkeyInvocation(`command:${commandId}`)) return;
   if (commandId === 'system-supercmd-whisper-speak-toggle') {
     void handleWhisperSpeakToggleHotkeyPress();
@@ -5519,7 +5544,6 @@ async function ensureKeyspyListener(): Promise<boolean> {
     callback = (event: IGlobalKeyEvent, down: IGlobalKeyDownMap): boolean => {
       let stopPropagation = false;
       const captureSessionActive = Boolean(keyspyHotkeyCaptureSession);
-      const ignoreCommandHotkeys = isAnySuperCmdWindowFocused();
       if (captureSessionActive) {
         const captured = processKeyspyHotkeyCaptureEvent(event, down);
         if (captured) {
@@ -5554,7 +5578,12 @@ async function ensureKeyspyListener(): Promise<boolean> {
       }
 
       for (const spec of keyspyShortcutSpecs.values()) {
-        if (ignoreCommandHotkeys && spec.handler === 'command') continue;
+        if (
+          spec.handler === 'command' &&
+          shouldIgnoreCommandHotkeyWhileAppFocused(String(spec.commandId || ''))
+        ) {
+          continue;
+        }
         if (!isShortcutMatchForEvent(spec, event, down)) continue;
         stopPropagation = true;
         if (keyspyActiveShortcutIds.has(spec.id)) continue;
@@ -10370,6 +10399,7 @@ app.whenReady().then(async () => {
       const success = registerGlobalShortcut(newShortcut);
       if (success) {
         saveSettings({ globalShortcut: newShortcut });
+        resetHotkeyTransientState();
       }
       return success;
     }
