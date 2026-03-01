@@ -101,8 +101,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   enabledCommands: [],
   customExtensionFolders: [],
   commandHotkeys: {
-    'system-cursor-prompt': 'Fn+K',
-    'system-add-to-memory': 'Fn+M',
+    'system-cursor-prompt': '',
+    'system-add-to-memory': '',
     'system-supercmd-whisper': 'Command+Shift+W',
     'system-supercmd-whisper-speak-toggle': 'Fn',
     'system-supercmd-speak': 'Command+Shift+S',
@@ -113,7 +113,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     'system-window-management-top-left': 'Control+Alt+U',
     'system-window-management-top-right': 'Control+Alt+I',
     'system-window-management-bottom-left': 'Control+Alt+J',
-    'system-window-management-bottom-right': 'Control+Alt+K',
+    'system-window-management-bottom-right': 'Control+Alt+L',
     'system-window-management-first-third': 'Control+Alt+D',
     'system-window-management-center-third': 'Control+Alt+F',
     'system-window-management-last-third': 'Control+Alt+G',
@@ -307,8 +307,22 @@ export function loadSettings(): AppSettings {
       if (!normalizedCommandId || !normalizedAlias) continue;
       normalizedAliases[normalizedCommandId] = normalizedAlias;
     }
-    if (parsedHotkeys['system-cursor-prompt'] === 'Command+Shift+K') {
+    if (
+      parsedHotkeys['system-cursor-prompt'] === 'Command+Shift+K' ||
+      parsedHotkeys['system-cursor-prompt'] === 'Fn+K' ||
+      parsedHotkeys['system-cursor-prompt'] === 'Control+Alt+K'
+    ) {
       parsedHotkeys['system-cursor-prompt'] = DEFAULT_SETTINGS.commandHotkeys['system-cursor-prompt'];
+    }
+    if (
+      parsedHotkeys['system-add-to-memory'] === 'Fn+M' ||
+      parsedHotkeys['system-add-to-memory'] === 'Control+Alt+M'
+    ) {
+      parsedHotkeys['system-add-to-memory'] = DEFAULT_SETTINGS.commandHotkeys['system-add-to-memory'];
+    }
+    if (parsedHotkeys['system-window-management-bottom-right'] === 'Control+Alt+K') {
+      parsedHotkeys['system-window-management-bottom-right'] =
+        DEFAULT_SETTINGS.commandHotkeys['system-window-management-bottom-right'];
     }
     settingsCache = {
       globalShortcut: parsed.globalShortcut ?? DEFAULT_SETTINGS.globalShortcut,

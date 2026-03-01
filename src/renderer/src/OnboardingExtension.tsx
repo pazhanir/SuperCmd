@@ -489,7 +489,9 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
         if (status === 'denied' || status === 'restricted') {
           setPermissionNotes((prev) => ({
             ...prev,
-            [id]: `${targetLabel} access is blocked. Enable SuperCmd in System Settings, then return.`,
+            [id]: id === 'speech-recognition'
+              ? 'Open Speech Recognition settings, enable SuperCmd, then press request again.'
+              : `${targetLabel} access is blocked. Enable SuperCmd in System Settings, then return.`,
           }));
         } else if (latestError) {
           if (/failed to request microphone access/i.test(latestError)) {
@@ -519,28 +521,36 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
       if (id === 'microphone') {
         await new Promise((resolve) => setTimeout(resolve, 350));
       }
-      const candidateUrls = id === 'microphone'
-        ? [url, 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone']
-        : id === 'speech-recognition'
+      const shouldAutoOpenSettings = id === 'input-monitoring' || id === 'speech-recognition';
+      if (shouldAutoOpenSettings) {
+        const candidateUrls = id === 'speech-recognition'
           ? [url, 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_SpeechRecognition']
-          : id === 'input-monitoring'
-            ? [url, 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent']
-            : id === 'home-folder'
-              ? [url, 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_FilesAndFolders']
-              : [url];
-      let ok = false;
-      for (const candidate of candidateUrls) {
-        if (ok) break;
-        ok = await window.electron.openUrl(candidate);
-      }
-      if (ok) {
-        if (id === 'input-monitoring') {
-          // macOS 13+ does not auto-add apps to Input Monitoring via CGEventTap.
-          // The user must click "+" in System Settings and manually select SuperCmd.
-          setPermissionNotes((prev) => ({
-            ...prev,
-            [id]: 'In Input Monitoring, click "+" at the bottom left and add SuperCmd from your Applications folder.',
-          }));
+          : [url, 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent'];
+        let ok = false;
+        for (const candidate of candidateUrls) {
+          if (ok) break;
+          ok = await window.electron.openUrl(candidate);
+        }
+        if (ok) {
+          if (id === 'input-monitoring') {
+            // macOS 13+ does not auto-add apps to Input Monitoring via CGEventTap.
+            // The user must click "+" at the bottom left and manually select SuperCmd.
+            setPermissionNotes((prev) => ({
+              ...prev,
+              [id]: 'In Input Monitoring, click "+" at the bottom left and add SuperCmd from your Applications folder.',
+            }));
+          } else if (
+            id === 'speech-recognition' &&
+            !granted &&
+            (status === 'denied' || status === 'restricted' || latestError || mode === 'manual')
+          ) {
+            setPermissionNotes((prev) => ({
+              ...prev,
+              [id]: 'Open Speech Recognition settings, enable SuperCmd, then press request again.',
+            }));
+          } else if (mode === 'manual' && !requested) {
+            setRequestedPermissions((prev) => ({ ...prev, [id]: false }));
+          }
         } else if (mode === 'manual' && !requested) {
           setRequestedPermissions((prev) => ({ ...prev, [id]: false }));
         }
@@ -695,7 +705,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     <p className="text-white/90 text-sm font-medium">Current Launcher Hotkey</p>
                   </div>
                   <p className="text-white/62 text-xs mb-5">
-                    AI Prompt uses Fn + K and Memory uses Fn + M by default. Configure launcher key below.
+                    Configure your launcher key below.
                   </p>
 
                   <div className="flex flex-wrap items-center gap-2 mb-5">
@@ -1001,8 +1011,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     ))}
                   </div>
                   <p className="text-white/46 text-xs leading-relaxed">
-                    Tip: use <span className="text-white/62">Fn + K</span> for Global AI Prompt and{' '}
-                    <span className="text-white/62">Fn + M</span> to add selected text to Memory.
+                    Next Step: Start Launcher -&gt; Settings -&gt; Extensions and set the shortcut for AI Prompt and Memory to use it.
                   </p>
                 </div>
               </div>
