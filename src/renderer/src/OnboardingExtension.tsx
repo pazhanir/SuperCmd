@@ -160,7 +160,6 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
   const [whisperKeyStatus, setWhisperKeyStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [isHoldKeyActive, setIsHoldKeyActive] = useState(false);
   const [speechLanguage, setSpeechLanguage] = useState('en-US');
-  const [spotlightReplaceStatus, setSpotlightReplaceStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const introVideoRef = useRef<HTMLVideoElement | null>(null);
   const openedPermissionsRef = useRef<Record<string, boolean>>({});
   const requestedPermissionsRef = useRef<Record<string, boolean>>({});
@@ -198,23 +197,6 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
         },
       } as any);
     } catch {}
-  };
-
-  const handleReplaceSpotlight = async () => {
-    setSpotlightReplaceStatus('loading');
-    try {
-      const ok = await window.electron.replaceSpotlightWithSuperCmdShortcut();
-      if (ok) {
-        setSpotlightReplaceStatus('success');
-        setShortcut('Command+Space');
-        setShortcutStatus('success');
-        setTimeout(() => setShortcutStatus('idle'), 1600);
-      } else {
-        setSpotlightReplaceStatus('error');
-      }
-    } catch {
-      setSpotlightReplaceStatus('error');
-    }
   };
 
   // Fix 4: Auto-refresh permission statuses when user returns from System Settings.
@@ -614,7 +596,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                   <div className="rounded-2xl border border-white/[0.07] bg-black/24 px-4 py-3">
                     <p className="text-white/88 text-sm mb-2">What gets configured now:</p>
                     <div className="text-white/72 text-sm space-y-1">
-                      <p>1. Launcher hotkey and inline prompt defaults</p>
+                      <p>1. Launcher hotkey</p>
                       <p>2. Accessibility, Input Monitoring, Speech Recognition, Microphone</p>
                       <p>3. Whisper dictation and Read mode practice</p>
                     </div>
@@ -676,7 +658,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     <p className="text-white/90 text-sm font-medium">Current Launcher Hotkey</p>
                   </div>
                   <p className="text-white/62 text-xs mb-5">
-                    Inline prompt default is now Cmd + Shift + K. Configure launcher key below.
+                    Configure your launcher key below. You can add AI Prompt and Memory hotkeys later from Settings.
                   </p>
 
                   <div className="flex flex-wrap items-center gap-2 mb-5">
@@ -701,24 +683,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                   <div className="rounded-xl border border-white/[0.07] bg-white/[0.05] p-3.5">
                     <div className="flex items-center justify-between gap-3 mb-1.5">
                       <p className="text-white/86 text-xs font-medium">Replace Spotlight (Cmd + Space)</p>
-                      <button
-                        onClick={() => { void handleReplaceSpotlight(); }}
-                        disabled={spotlightReplaceStatus === 'loading' || spotlightReplaceStatus === 'success'}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition-colors disabled:opacity-60 ${
-                          spotlightReplaceStatus === 'success'
-                            ? 'border-emerald-200/35 bg-emerald-500/22 text-emerald-100'
-                            : 'border-white/[0.12] bg-white/[0.10] hover:bg-white/[0.18] text-white'
-                        }`}
-                      >
-                        {spotlightReplaceStatus === 'success' ? <Check className="w-3 h-3" /> : null}
-                        {spotlightReplaceStatus === 'loading' ? 'Replacing…' : spotlightReplaceStatus === 'success' ? 'Replaced' : 'Auto Replace'}
-                      </button>
                     </div>
-                    {spotlightReplaceStatus === 'success' ? (
-                      <p className="text-emerald-200/85 text-xs mb-1.5">Spotlight shortcut disabled. SuperCmd is now Cmd + Space.</p>
-                    ) : spotlightReplaceStatus === 'error' ? (
-                      <p className="text-rose-200/85 text-xs mb-1.5">Auto-replace failed. Use the manual steps below.</p>
-                    ) : null}
                     <div className="text-white/55 text-xs space-y-1">
                       <p>Manual: System Settings → Keyboard → Keyboard Shortcuts → Spotlight → disable.</p>
                       <p>Then set the launcher hotkey above to Cmd + Space.</p>
@@ -990,8 +955,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     ))}
                   </div>
                   <p className="text-white/46 text-xs leading-relaxed">
-                    Tip: use <span className="text-white/62">Cmd + Shift + K</span> for Global AI Prompt and{' '}
-                    <span className="text-white/62">Cmd + Shift + O</span> to add selected text to Memory.
+                    Next step: Setup Hotkeys for AI Prompt and Memory from SuperCmd Settings {'->'} Extensions to start using AI anywhere.
                   </p>
                 </div>
               </div>
