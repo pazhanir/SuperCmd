@@ -2612,6 +2612,9 @@ type OnboardingPermissionResult = {
   status?: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
   canPrompt?: boolean;
   error?: string;
+  automationRequested?: boolean;
+  automationGranted?: boolean;
+  automationError?: string;
 };
 
 type MicrophoneAccessStatus = 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
@@ -2958,6 +2961,52 @@ async function checkInputMonitoringAccess(): Promise<boolean> {
   });
 }
 
+async function requestSystemEventsAutomationAccess(): Promise<{
+  granted: boolean;
+  requested: boolean;
+  error?: string;
+}> {
+  if (process.platform !== 'darwin') {
+    return { granted: true, requested: false };
+  }
+
+  try {
+    try { app.focus({ steal: true }); } catch {}
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    } catch {}
+
+    const { execFile } = require('child_process') as typeof import('child_process');
+    const { promisify } = require('util') as typeof import('util');
+    const execFileAsync = promisify(execFile);
+    await execFileAsync('/usr/bin/osascript', [
+      '-e',
+      `
+        tell application "System Events"
+          return count of application processes
+        end tell
+      `,
+    ]);
+    return {
+      granted: true,
+      requested: true,
+    };
+  } catch (error: any) {
+    const message = String(error?.stderr || error?.message || error || '').trim();
+    const fallbackError = /not authorized|not permitted|1743|automation/i.test(message)
+      ? 'Allow SuperCmd in System Settings -> Privacy & Security -> Automation -> System Events, then press request again.'
+      : message || 'System Events access was not granted.';
+    return {
+      granted: false,
+      requested: true,
+      error: fallbackError,
+    };
+  }
+}
+
 async function requestOnboardingPermissionAccess(target: OnboardingPermissionTarget): Promise<OnboardingPermissionResult> {
   if (process.platform !== 'darwin') {
     if (target === 'home-folder') {
@@ -3028,15 +3077,37 @@ async function requestOnboardingPermissionAccess(target: OnboardingPermissionTar
   }
 
   if (target === 'accessibility') {
+    const automation = await requestSystemEventsAutomationAccess();
     try {
       const before = systemPreferences.isTrustedAccessibilityClient(false);
       if (before) {
-        return { granted: true, requested: true, mode: 'already-granted' };
+        return {
+          granted: true,
+          requested: true,
+          mode: 'already-granted',
+          automationRequested: automation.requested,
+          automationGranted: automation.granted,
+          automationError: automation.error,
+        };
       }
       const after = systemPreferences.isTrustedAccessibilityClient(true);
-      return { granted: Boolean(after), requested: true, mode: 'prompted' };
+      return {
+        granted: Boolean(after),
+        requested: true,
+        mode: 'prompted',
+        automationRequested: automation.requested,
+        automationGranted: automation.granted,
+        automationError: automation.error,
+      };
     } catch {
-      return { granted: false, requested: true, mode: 'prompted' };
+      return {
+        granted: false,
+        requested: true,
+        mode: 'prompted',
+        automationRequested: automation.requested,
+        automationGranted: automation.granted,
+        automationError: automation.error,
+      };
     }
   }
 

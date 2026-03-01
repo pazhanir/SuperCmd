@@ -374,6 +374,9 @@ export interface ElectronAPI {
     status?: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
     canPrompt?: boolean;
     error?: string;
+    automationRequested?: boolean;
+    automationGranted?: boolean;
+    automationError?: string;
   }>;
   updateCommandHotkey: (
     commandId: string,

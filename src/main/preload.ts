@@ -253,6 +253,9 @@ contextBridge.exposeInMainWorld('electron', {
     status?: 'granted' | 'denied' | 'restricted' | 'not-determined' | 'unknown';
     canPrompt?: boolean;
     error?: string;
+    automationRequested?: boolean;
+    automationGranted?: boolean;
+    automationError?: string;
   }> =>
     ipcRenderer.invoke('onboarding-request-permission', target),
   updateCommandHotkey: (

@@ -69,7 +69,7 @@ const permissionTargets: Array<{
   {
     id: 'accessibility',
     title: 'Accessibility',
-    description: 'Required for text selection, keyboard automation, and reliable typing into other apps.',
+    description: 'Required for text selection, typing, and System Events access.',
     url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
     icon: Shield,
     iconTone: 'text-rose-100',
@@ -425,6 +425,9 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
       const mode = String(result?.mode || '');
       let status = String(result?.status || '');
       let latestError = String(result?.error || '').trim();
+      const automationRequested = Boolean(result?.automationRequested);
+      const automationGranted = Boolean(result?.automationGranted);
+      const automationError = String(result?.automationError || '').trim();
       if (requested) {
         setRequestedPermissions((prev) => ({ ...prev, [id]: true }));
       }
@@ -472,6 +475,14 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
       }
       if (granted) {
         setOpenedPermissions((prev) => ({ ...prev, [id]: true }));
+      }
+      if (id === 'accessibility' && automationRequested && !automationGranted) {
+        setPermissionNotes((prev) => ({
+          ...prev,
+          [id]: automationError || 'Allow SuperCmd to control System Events, then press request again.',
+        }));
+      } else if (id === 'accessibility' && automationRequested && automationGranted) {
+        setPermissionNotes((prev) => ({ ...prev, [id]: '' }));
       } else if (id === 'microphone' || id === 'speech-recognition') {
         const targetLabel = id === 'microphone' ? 'Microphone' : 'Speech Recognition';
         if (status === 'denied' || status === 'restricted') {
@@ -730,26 +741,26 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
 
           {step === 2 && (
             <div className="min-h-full flex items-center justify-center">
-              <div className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-5">
+              <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-4">
                 <div
-                  className="rounded-3xl border border-white/[0.09] p-5"
+                  className="rounded-3xl border border-white/[0.09] p-4"
                   style={{
                     background: 'var(--onboarding-permission-side-bg)',
                     boxShadow: 'var(--onboarding-permission-side-shadow)',
                   }}
                 >
-                  <p className="text-white text-[20px] leading-tight font-semibold mb-2">Grant Access</p>
-                  <p className="text-white/72 text-sm leading-relaxed mb-4">
-                    We now request each permission first, then jump to the exact Privacy & Security page so SuperCmd appears where needed.
+                  <p className="text-white text-[18px] leading-tight font-semibold mb-2">Grant Access</p>
+                  <p className="text-white/72 text-[13px] leading-relaxed mb-3.5">
+                    Request each permission here. Accessibility now also triggers the System Events dialog so you do not need to reopen SuperCmd later.
                   </p>
-                  <div className="space-y-2 text-xs text-white/70">
+                  <div className="space-y-1.5 text-[11px] text-white/70">
                     <p>1. Click each access row once</p>
                     <p>2. Enable SuperCmd in System Settings</p>
-                    <p>3. Return and continue setup</p>
+                    <p>3. Return here and continue setup</p>
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-white/[0.09] bg-white/[0.05] p-4 space-y-3">
+                <div className="rounded-3xl border border-white/[0.09] bg-white/[0.05] p-3 space-y-2.5">
                   {permissionTargets.map((target, index) => {
                     const Icon = target.icon;
                     const isDone = Boolean(openedPermissions[target.id]);
@@ -758,7 +769,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     return (
                       <div
                         key={target.id}
-                        className="rounded-2xl border p-3.5"
+                        className="rounded-2xl border p-3"
                         style={{
                           borderColor: isDone ? 'var(--onboarding-permission-border-done)' : 'var(--onboarding-permission-border-pending)',
                           background: isDone
@@ -769,14 +780,14 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                             : 'var(--onboarding-permission-pending-shadow)',
                         }}
                       >
-                        <div className="flex flex-col gap-3 md:flex-row md:items-start">
+                        <div className="flex flex-col gap-2.5 md:flex-row md:items-center">
                           <div className="flex items-start gap-3 flex-1 min-w-0">
                             <div className="text-white/35 text-[11px] font-semibold mt-1">{String(index + 1).padStart(2, '0')}</div>
                             <div className={`w-8 h-8 rounded-lg border flex items-center justify-center shrink-0 ${target.iconBg}`}>
                               <Icon className={`w-4 h-4 ${target.iconTone}`} />
                             </div>
                             <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                              <div className="flex items-center gap-2 flex-wrap mb-0.5">
                                 <p className="text-white/96 text-sm font-semibold">{target.title}</p>
                                 {isDone ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border border-emerald-200/35 bg-emerald-500/22 text-emerald-100">
@@ -794,34 +805,33 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                                 )}
                               </div>
                               <p className="text-white/68 text-xs leading-relaxed">{target.description}</p>
+                              {!isDone && (target.id === 'microphone' || target.id === 'speech-recognition') ? (
+                                <p className="mt-1 text-[11px] text-white/52 leading-relaxed">
+                                  If needed, open Privacy & Security and press request again.
+                                </p>
+                              ) : null}
+                              {target.id === 'input-monitoring' ? (
+                                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-100/85 leading-relaxed">
+                                  If SuperCmd is missing, click + and add it from Applications.
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                           <button
                             onClick={() => openPermissionTarget(target.id, target.url)}
                             disabled={Boolean(permissionLoading[target.id])}
-                            className="inline-flex justify-center items-center gap-1.5 px-3 py-2 rounded-md border border-white/[0.12] bg-white/[0.10] hover:bg-white/[0.18] text-white text-xs font-medium transition-colors disabled:opacity-60 md:min-w-[190px]"
+                            className="inline-flex justify-center items-center gap-1.5 px-3 py-2 rounded-md border border-white/[0.12] bg-white/[0.10] hover:bg-white/[0.18] text-white text-xs font-medium transition-colors disabled:opacity-60 md:min-w-[170px]"
                           >
                             {permissionLoading[target.id]
                               ? 'Requesting...'
                               : target.id === 'input-monitoring'
                                 ? 'Request + Open Settings'
                                 : 'Request Access'}
-                            {target.id === 'input-monitoring' ? <ExternalLink className="w-3 h-3" /> : null}
                           </button>
                         </div>
                         {!isDone && isRequested ? (
                           <p className="mt-2 text-[11px] text-amber-100/85">
                             Permission request sent. Enable SuperCmd in System Settings, then return.
-                          </p>
-                        ) : null}
-                        {!isDone && (target.id === 'microphone' || target.id === 'speech-recognition') ? (
-                          <p className="mt-1 text-[11px] text-white/52">
-                            If this opens Privacy & Security, select the matching access row and press request again.
-                          </p>
-                        ) : null}
-                        {target.id === 'input-monitoring' ? (
-                          <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-100/85">
-                            If SuperCmd is not visible here, click + and manually add SuperCmd from the Applications folder.
                           </p>
                         ) : null}
                         {!isDone && note ? (
