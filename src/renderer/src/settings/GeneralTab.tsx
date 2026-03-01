@@ -216,8 +216,7 @@ const GeneralTab: React.FC = () => {
         icon: <RotateCcw className="w-3.5 h-3.5" />,
         onClick: handleRestartToInstall,
         disabled: !updaterSupported,
-        className:
-          'border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700',
+        tone: 'restart' as const,
       };
     }
 
@@ -227,8 +226,7 @@ const GeneralTab: React.FC = () => {
         icon: <Download className={`w-3.5 h-3.5 ${updaterState === 'downloading' ? 'animate-pulse' : ''}`} />,
         onClick: handleDownloadUpdate,
         disabled: !updaterSupported || updaterState === 'downloading',
-        className:
-          'border border-cyan-600 bg-cyan-600 text-white hover:bg-cyan-700 hover:border-cyan-700',
+        tone: 'download' as const,
       };
     }
 
@@ -237,10 +235,37 @@ const GeneralTab: React.FC = () => {
       icon: <RefreshCw className={`w-3.5 h-3.5 ${updaterState === 'checking' ? 'animate-spin' : ''}`} />,
       onClick: handleCheckForUpdates,
       disabled: !updaterSupported || updaterState === 'checking',
-      className:
-        'border border-[var(--text-primary)] bg-[var(--text-primary)] text-[var(--settings-panel-bg)] hover:opacity-90',
+      tone: 'check' as const,
     };
   }, [handleCheckForUpdates, handleDownloadUpdate, handleRestartToInstall, updaterState, updaterSupported]);
+  const updaterButtonStyle = useMemo<React.CSSProperties>(() => {
+    if (updaterAction.disabled) {
+      return {
+        borderColor: 'var(--ui-divider)',
+        background: 'var(--ui-segment-bg)',
+        color: 'var(--text-muted)',
+      };
+    }
+    if (updaterAction.tone === 'restart') {
+      return {
+        borderColor: '#047857',
+        background: '#059669',
+        color: '#ffffff',
+      };
+    }
+    if (updaterAction.tone === 'download') {
+      return {
+        borderColor: '#0e7490',
+        background: '#0891b2',
+        color: '#ffffff',
+      };
+    }
+    return {
+      borderColor: '#1d4ed8',
+      background: '#2563eb',
+      color: '#ffffff',
+    };
+  }, [updaterAction]);
 
   const handleThemePreferenceChange = (nextTheme: ThemePreference) => {
     setThemePreference(nextTheme);
@@ -415,7 +440,8 @@ const GeneralTab: React.FC = () => {
                 type="button"
                 onClick={updaterAction.onClick}
                 disabled={updaterAction.disabled}
-                className={`inline-flex min-w-[190px] items-center justify-center gap-1.5 px-3 py-2 rounded-md text-[0.75rem] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-100 disabled:border-[var(--ui-divider)] disabled:bg-[var(--ui-segment-bg)] disabled:text-[var(--text-muted)] ${updaterAction.className}`}
+                className="inline-flex min-w-[190px] items-center justify-center gap-1.5 px-3 py-2 rounded-md border text-[0.75rem] font-semibold transition-[filter,background-color,border-color,color] hover:brightness-110 disabled:cursor-not-allowed disabled:hover:brightness-100"
+                style={updaterButtonStyle}
               >
                 {updaterAction.icon}
                 {updaterAction.label}

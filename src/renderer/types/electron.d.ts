@@ -45,6 +45,7 @@ export interface FileSearchIndexStatus {
   excludedTopLevelDirectories: string[];
   protectedTopLevelDirectories: string[];
   includeProtectedHomeRoots: boolean;
+  includeICloudDrive: boolean;
   lastError: string | null;
 }
 
@@ -190,6 +191,7 @@ export interface AppSettings {
   hasSeenOnboarding: boolean;
   hasSeenWhisperOnboarding: boolean;
   fileSearchProtectedRootsEnabled: boolean;
+  fileSearchICloudDriveEnabled: boolean;
   ai: AISettings;
   commandMetadata?: Record<string, { subtitle?: string }>;
   debugMode: boolean;

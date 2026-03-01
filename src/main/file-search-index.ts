@@ -23,6 +23,7 @@ export type FileSearchIndexStatus = {
   excludedTopLevelDirectories: string[];
   protectedTopLevelDirectories: string[];
   includeProtectedHomeRoots: boolean;
+  includeICloudDrive: boolean;
   lastError: string | null;
 };
 
@@ -89,14 +90,15 @@ export const FILE_SEARCH_INDEX_EXCLUDED_DIRECTORY_NAMES = [
 export const FILE_SEARCH_INDEX_EXCLUDED_HOME_TOP_LEVEL_DIRECTORIES = [
   '.Trash',
   'Library',
+  // Avoid TCC prompts for personal media libraries during background indexing.
+  'Music',
+  'Pictures',
 ] as const;
 export const FILE_SEARCH_INDEX_PROTECTED_HOME_TOP_LEVEL_DIRECTORIES = [
   'Desktop',
   'Documents',
   'Downloads',
   'Movies',
-  'Music',
-  'Pictures',
 ] as const;
 
 const EXCLUDED_DIRECTORY_NAME_SET = new Set(
@@ -117,6 +119,7 @@ let configuredHomeDir = '';
 let includeRoots: string[] = [];
 let refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS;
 let includeProtectedHomeRoots = false;
+let includeICloudDrive = false;
 let indexing = false;
 let lastIndexError: string | null = null;
 let lastBuildStartedAt = 0;
@@ -124,6 +127,7 @@ let lastBuildStartedAt = 0;
 type DirectoryQueueEntry = {
   scanPath: string;
   displayPath: string;
+  rootPath: string;
   resolvedPath?: string;
 };
 
@@ -177,7 +181,7 @@ function isSubsequenceMatch(needle: string, haystack: string): boolean {
   return needleIndex === needle.length;
 }
 
-function shouldSkipDirectory(absolutePath: string, dirName: string, homeDir: string): boolean {
+function shouldSkipDirectory(absolutePath: string, dirName: string, homeDir: string, rootDir: string): boolean {
   const trimmedName = String(dirName || '').trim();
   if (!trimmedName) return true;
   if (trimmedName.startsWith('.')) return true;
@@ -185,13 +189,15 @@ function shouldSkipDirectory(absolutePath: string, dirName: string, homeDir: str
   const lowerName = trimmedName.toLowerCase();
   if (EXCLUDED_DIRECTORY_NAME_SET.has(lowerName)) return true;
 
-  const relative = path.relative(homeDir, absolutePath);
+  const relative = path.relative(rootDir, absolutePath);
   if (!relative || relative.startsWith('..')) return true;
 
   const segments = relative.split(path.sep).filter(Boolean);
-  if (segments.length > 0 && EXCLUDED_TOP_LEVEL_SET.has(segments[0].toLowerCase())) return true;
-  if (segments.length > 0 && PROTECTED_TOP_LEVEL_SET.has(segments[0].toLowerCase()) && !includeProtectedHomeRoots) {
-    return true;
+  if (rootDir === homeDir) {
+    if (segments.length > 0 && EXCLUDED_TOP_LEVEL_SET.has(segments[0].toLowerCase())) return true;
+    if (segments.length > 0 && PROTECTED_TOP_LEVEL_SET.has(segments[0].toLowerCase()) && !includeProtectedHomeRoots) {
+      return true;
+    }
   }
   return false;
 }
@@ -270,6 +276,7 @@ async function buildIndexSnapshot(homeDir: string): Promise<IndexSnapshot> {
   const walkQueue: DirectoryQueueEntry[] = includeRoots.map((root) => ({
     scanPath: root,
     displayPath: root,
+    rootPath: root,
   }));
   const visitedRealDirectories = new Set<string>();
   let queueIndex = 0;
@@ -286,8 +293,9 @@ async function buildIndexSnapshot(homeDir: string): Promise<IndexSnapshot> {
 
     const currentDir = currentEntry.scanPath;
     const currentDisplayPath = currentEntry.displayPath || currentDir;
+    const currentRootPath = currentEntry.rootPath || homeDir;
     const currentRealPath = currentEntry.resolvedPath || (await resolveRealPath(currentDir)) || currentDir;
-    if (!isPathWithinRoot(currentRealPath, homeDir)) {
+    if (!isPathWithinRoot(currentRealPath, currentRootPath)) {
       continue;
     }
     if (visitedRealDirectories.has(currentRealPath)) {
@@ -308,20 +316,20 @@ async function buildIndexSnapshot(homeDir: string): Promise<IndexSnapshot> {
       const absoluteDisplayPath = path.join(currentDisplayPath, name);
 
       if (dirent.isDirectory()) {
-        if (shouldSkipDirectory(absoluteDisplayPath, name, homeDir)) continue;
+        if (shouldSkipDirectory(absoluteDisplayPath, name, homeDir, currentRootPath)) continue;
         indexEntry(snapshot, {
           path: absoluteDisplayPath,
           name,
           parentPath: currentDisplayPath,
           isDirectory: true,
         });
-        walkQueue.push({ scanPath: absoluteScanPath, displayPath: absoluteDisplayPath });
+        walkQueue.push({ scanPath: absoluteScanPath, displayPath: absoluteDisplayPath, rootPath: currentRootPath });
         continue;
       }
 
       if (dirent.isSymbolicLink()) {
         const resolvedPath = await resolveRealPath(absoluteScanPath);
-        if (!resolvedPath || !isPathWithinRoot(resolvedPath, homeDir)) {
+        if (!resolvedPath || !isPathWithinRoot(resolvedPath, currentRootPath)) {
           continue;
         }
 
@@ -333,7 +341,7 @@ async function buildIndexSnapshot(homeDir: string): Promise<IndexSnapshot> {
         }
 
         if (stats.isDirectory()) {
-          if (shouldSkipDirectory(absoluteDisplayPath, name, homeDir)) continue;
+          if (shouldSkipDirectory(absoluteDisplayPath, name, homeDir, currentRootPath)) continue;
           indexEntry(snapshot, {
             path: absoluteDisplayPath,
             name,
@@ -343,6 +351,7 @@ async function buildIndexSnapshot(homeDir: string): Promise<IndexSnapshot> {
           walkQueue.push({
             scanPath: absoluteScanPath,
             displayPath: absoluteDisplayPath,
+            rootPath: currentRootPath,
             resolvedPath,
           });
           continue;
@@ -463,17 +472,33 @@ function resolveHomeDir(inputHomeDir?: string): string {
   return path.resolve(os.homedir());
 }
 
+function resolveICloudDrivePath(homeDir: string): string | null {
+  const candidate = path.join(homeDir, 'Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  try {
+    return fs.existsSync(candidate) ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveIncludeRoots(homeDir: string): string[] {
   if (!homeDir) return [];
-  if (fs.existsSync(homeDir)) return [homeDir];
-  return [];
+  const roots: string[] = [];
+  if (fs.existsSync(homeDir)) {
+    roots.push(homeDir);
+  }
+  if (includeProtectedHomeRoots && includeICloudDrive) {
+    const iCloudDrivePath = resolveICloudDrivePath(homeDir);
+    if (iCloudDrivePath) {
+      roots.push(iCloudDrivePath);
+    }
+  }
+  return roots;
 }
 
 function ensureConfigured(inputHomeDir?: string): void {
   const nextHome = resolveHomeDir(inputHomeDir || configuredHomeDir);
   if (!nextHome) return;
-  if (configuredHomeDir && configuredHomeDir === nextHome && includeRoots.length > 0) return;
-
   configuredHomeDir = nextHome;
   includeRoots = resolveIncludeRoots(configuredHomeDir);
 }
@@ -490,6 +515,7 @@ export function getFileSearchIndexStatus(): FileSearchIndexStatus {
     excludedTopLevelDirectories: [...FILE_SEARCH_INDEX_EXCLUDED_HOME_TOP_LEVEL_DIRECTORIES],
     protectedTopLevelDirectories: [...FILE_SEARCH_INDEX_PROTECTED_HOME_TOP_LEVEL_DIRECTORIES],
     includeProtectedHomeRoots,
+    includeICloudDrive,
     lastError: lastIndexError,
   };
 }
@@ -535,13 +561,17 @@ export function startFileSearchIndexing(options?: {
   homeDir?: string;
   refreshIntervalMs?: number;
   includeProtectedHomeRoots?: boolean;
+  includeICloudDrive?: boolean;
 }): void {
+  if (typeof options?.includeProtectedHomeRoots === 'boolean') {
+    includeProtectedHomeRoots = options.includeProtectedHomeRoots;
+  }
+  if (typeof options?.includeICloudDrive === 'boolean') {
+    includeICloudDrive = options.includeICloudDrive;
+  }
   ensureConfigured(options?.homeDir);
   if (typeof options?.refreshIntervalMs === 'number' && Number.isFinite(options.refreshIntervalMs)) {
     refreshIntervalMs = Math.max(30_000, Math.floor(options.refreshIntervalMs));
-  }
-  if (typeof options?.includeProtectedHomeRoots === 'boolean') {
-    includeProtectedHomeRoots = options.includeProtectedHomeRoots;
   }
 
   if (refreshTimer) {

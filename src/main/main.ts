@@ -2677,11 +2677,15 @@ async function probeHomeFolderAccess(): Promise<HomeFolderAccessProbeResult> {
 
   const homeDir = app.getPath('home');
   const targets = [homeDir];
-  for (const name of ['Desktop', 'Documents', 'Downloads', 'Pictures']) {
+  for (const name of ['Desktop', 'Documents', 'Downloads', 'Movies']) {
     const targetPath = path.join(homeDir, name);
     if (fs.existsSync(targetPath)) {
       targets.push(targetPath);
     }
+  }
+  const iCloudDrivePath = path.join(homeDir, 'Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  if (fs.existsSync(iCloudDrivePath)) {
+    targets.push(iCloudDrivePath);
   }
 
   const deniedPaths: string[] = [];
@@ -2702,37 +2706,108 @@ async function probeHomeFolderAccess(): Promise<HomeFolderAccessProbeResult> {
   };
 }
 
-async function promptForHomeFolderAccess(): Promise<{ requested: boolean; selectedHomeFolder: boolean; error?: string }> {
-  const homeDir = app.getPath('home');
+async function promptForDirectoryAccess(options: {
+  title: string;
+  message: string;
+  defaultPath: string;
+  buttonLabel: string;
+}): Promise<{ requested: boolean; selectedPath: string | null; error?: string }> {
   try {
     const hostWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
     const result = await dialog.showOpenDialog(hostWindow, {
-      title: 'Allow Home Folder Access',
-      message: 'Select your Home folder to let SuperCmd index files for Search Files.',
-      defaultPath: homeDir,
-      buttonLabel: 'Select Home Folder',
+      title: options.title,
+      message: options.message,
+      defaultPath: options.defaultPath,
+      buttonLabel: options.buttonLabel,
       properties: ['openDirectory', 'dontAddToRecent'],
     });
     if (result.canceled || !result.filePaths?.length) {
-      return { requested: false, selectedHomeFolder: false };
-    }
-    const selectedPath = path.resolve(String(result.filePaths[0] || ''));
-    const selectedHomeFolder = selectedPath === path.resolve(homeDir);
-    if (selectedHomeFolder) {
-      return { requested: true, selectedHomeFolder: true };
+      return { requested: false, selectedPath: null };
     }
     return {
       requested: true,
-      selectedHomeFolder: false,
-      error: 'Please select your Home folder to grant file search access.',
+      selectedPath: path.resolve(String(result.filePaths[0] || '')),
     };
   } catch (error: any) {
     return {
       requested: false,
-      selectedHomeFolder: false,
-      error: String(error?.message || error || 'Failed to request Home folder access.'),
+      selectedPath: null,
+      error: String(error?.message || error || 'Failed to request folder access.'),
     };
   }
+}
+
+async function promptForHomeFolderAccess(): Promise<{
+  requested: boolean;
+  selectedHomeFolder: boolean;
+  selectedICloudDrive: boolean;
+  error?: string;
+}> {
+  const homeDir = app.getPath('home');
+  const homeResult = await promptForDirectoryAccess({
+    title: 'Allow Folder Access',
+    message: 'Select your Home folder to let SuperCmd search Desktop, Documents, Downloads, and Movies.',
+    defaultPath: homeDir,
+    buttonLabel: 'Select Home Folder',
+  });
+
+  if (!homeResult.requested || !homeResult.selectedPath) {
+    return {
+      requested: homeResult.requested,
+      selectedHomeFolder: false,
+      selectedICloudDrive: false,
+      error: homeResult.error,
+    };
+  }
+
+  if (homeResult.selectedPath !== path.resolve(homeDir)) {
+    return {
+      requested: true,
+      selectedHomeFolder: false,
+      selectedICloudDrive: false,
+      error: 'Please select your Home folder to grant folder access.',
+    };
+  }
+
+  const iCloudDrivePath = path.join(homeDir, 'Library', 'Mobile Documents', 'com~apple~CloudDocs');
+  if (!fs.existsSync(iCloudDrivePath)) {
+    return {
+      requested: true,
+      selectedHomeFolder: true,
+      selectedICloudDrive: false,
+    };
+  }
+
+  const iCloudResult = await promptForDirectoryAccess({
+    title: 'Allow iCloud Drive Access',
+    message: 'Select your iCloud Drive folder so SuperCmd can search iCloud files too.',
+    defaultPath: iCloudDrivePath,
+    buttonLabel: 'Select iCloud Drive',
+  });
+
+  if (!iCloudResult.requested || !iCloudResult.selectedPath) {
+    return {
+      requested: true,
+      selectedHomeFolder: true,
+      selectedICloudDrive: false,
+      error: iCloudResult.error || 'Please select your iCloud Drive folder to grant iCloud access.',
+    };
+  }
+
+  if (iCloudResult.selectedPath !== path.resolve(iCloudDrivePath)) {
+    return {
+      requested: true,
+      selectedHomeFolder: true,
+      selectedICloudDrive: false,
+      error: 'Please select your iCloud Drive folder to grant iCloud access.',
+    };
+  }
+
+  return {
+    requested: true,
+    selectedHomeFolder: true,
+    selectedICloudDrive: true,
+  };
 }
 
 async function requestMicrophoneAccessViaNative(prompt: boolean): Promise<MicrophonePermissionResult | null> {
@@ -3010,10 +3085,14 @@ async function requestSystemEventsAutomationAccess(): Promise<{
 async function requestOnboardingPermissionAccess(target: OnboardingPermissionTarget): Promise<OnboardingPermissionResult> {
   if (process.platform !== 'darwin') {
     if (target === 'home-folder') {
-      saveSettings({ fileSearchProtectedRootsEnabled: true });
+      saveSettings({
+        fileSearchProtectedRootsEnabled: true,
+        fileSearchICloudDriveEnabled: true,
+      });
       startFileSearchIndexing({
         homeDir: app.getPath('home'),
         includeProtectedHomeRoots: true,
+        includeICloudDrive: true,
       });
       return {
         granted: true,
@@ -3032,10 +3111,14 @@ async function requestOnboardingPermissionAccess(target: OnboardingPermissionTar
   if (target === 'home-folder') {
     const before = await probeHomeFolderAccess();
     if (before.granted) {
-      saveSettings({ fileSearchProtectedRootsEnabled: true });
+      saveSettings({
+        fileSearchProtectedRootsEnabled: true,
+        fileSearchICloudDriveEnabled: true,
+      });
       startFileSearchIndexing({
         homeDir: app.getPath('home'),
         includeProtectedHomeRoots: true,
+        includeICloudDrive: true,
       });
       return {
         granted: true,
@@ -3049,10 +3132,14 @@ async function requestOnboardingPermissionAccess(target: OnboardingPermissionTar
     const promptResult = await promptForHomeFolderAccess();
     const after = await probeHomeFolderAccess();
     if (after.granted) {
-      saveSettings({ fileSearchProtectedRootsEnabled: true });
+      saveSettings({
+        fileSearchProtectedRootsEnabled: true,
+        fileSearchICloudDriveEnabled: promptResult.selectedICloudDrive,
+      });
       startFileSearchIndexing({
         homeDir: app.getPath('home'),
         includeProtectedHomeRoots: true,
+        includeICloudDrive: promptResult.selectedICloudDrive,
       });
       void rebuildFileSearchIndex('home-folder-permission').catch(() => {});
       return {
@@ -3072,7 +3159,7 @@ async function requestOnboardingPermissionAccess(target: OnboardingPermissionTar
       canPrompt: true,
       error:
         promptResult.error ||
-        'Allow SuperCmd in System Settings -> Privacy & Security -> Files and Folders, then request again.',
+        'Allow SuperCmd in System Settings -> Privacy & Security -> Files and Folders, then request folder access again.',
     };
   }
 
@@ -3448,22 +3535,13 @@ type SpeechRecognitionPermissionResult = {
   error?: string;
 };
 
-async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecognitionPermissionResult> {
+async function readSpeechRecognitionAccess(prompt: boolean): Promise<SpeechRecognitionPermissionResult> {
   if (process.platform !== 'darwin') {
     return {
       granted: true,
       requested: false,
       speechStatus: 'granted',
       microphoneStatus: 'granted',
-    };
-  }
-
-  if (!prompt) {
-    return {
-      granted: false,
-      requested: false,
-      speechStatus: 'unknown',
-      microphoneStatus: readMicrophoneAccessStatus(),
     };
   }
 
@@ -3481,10 +3559,11 @@ async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecog
 
   const settings = loadSettings();
   const language = String(settings.ai?.speechLanguage || 'en-US').trim() || 'en-US';
+  const helperArgs = prompt ? [language, '--auth-only'] : [language, '--check-auth-only'];
 
   return await new Promise<SpeechRecognitionPermissionResult>((resolve) => {
     const { spawn } = require('child_process');
-    const proc = spawn(binaryPath, [language, '--auth-only'], {
+    const proc = spawn(binaryPath, helperArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let settled = false;
@@ -3541,7 +3620,7 @@ async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecog
     proc.on('error', (error: Error) => {
       finalize({
         granted: false,
-        requested: false,
+        requested: prompt,
         speechStatus,
         microphoneStatus,
         error: error.message || 'Failed to request speech recognition access.',
@@ -3563,13 +3642,15 @@ async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecog
           error = stderr;
         } else if (code && code !== 0) {
           error = `Speech recognition permission check exited with code ${code}.`;
+        } else if (speechStatus === 'not-determined') {
+          error = 'Speech recognition permission did not appear. Press request again.';
         } else {
           error = 'Speech recognition permission is required for Whisper.';
         }
       }
       finalize({
         granted,
-        requested: true,
+        requested: prompt,
         speechStatus,
         microphoneStatus: finalMicStatus,
         error: error || undefined,
@@ -3580,13 +3661,38 @@ async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecog
       try { proc.kill('SIGTERM'); } catch {}
       finalize({
         granted: speechStatus === 'granted',
-        requested: true,
+        requested: prompt,
         speechStatus,
         microphoneStatus: readMicrophoneAccessStatus(),
         error: helperError || 'Speech permission prompt timed out. Please allow access and retry.',
       });
-    }, 15000);
+    }, prompt ? 15000 : 4000);
   });
+}
+
+async function ensureSpeechRecognitionAccess(prompt = true): Promise<SpeechRecognitionPermissionResult> {
+  if (process.platform !== 'darwin') {
+    return {
+      granted: true,
+      requested: false,
+      speechStatus: 'granted',
+      microphoneStatus: 'granted',
+    };
+  }
+
+  if (prompt) {
+    try { app.focus({ steal: true }); } catch {}
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (!mainWindow.isVisible()) {
+          mainWindow.show();
+        }
+        mainWindow.focus();
+      }
+    } catch {}
+  }
+
+  return await readSpeechRecognitionAccess(prompt);
 }
 
 function resolveEdgeVoice(language?: string): string {
@@ -9655,6 +9761,7 @@ app.whenReady().then(async () => {
   startFileSearchIndexing({
     homeDir: app.getPath('home'),
     includeProtectedHomeRoots: Boolean(settings.fileSearchProtectedRootsEnabled),
+    includeICloudDrive: Boolean(settings.fileSearchICloudDriveEnabled),
   });
   if (settings.hasSeenOnboarding) {
     const canStartKeyspy = await canStartKeyspyWithoutPrompt();
@@ -10063,10 +10170,14 @@ app.whenReady().then(async () => {
           console.error('Failed to rebuild extensions after updating custom folders:', error);
         }
       }
-      if (patch.fileSearchProtectedRootsEnabled !== undefined) {
+      if (
+        patch.fileSearchProtectedRootsEnabled !== undefined ||
+        patch.fileSearchICloudDriveEnabled !== undefined
+      ) {
         startFileSearchIndexing({
           homeDir: app.getPath('home'),
           includeProtectedHomeRoots: Boolean(result.fileSearchProtectedRootsEnabled),
+          includeICloudDrive: Boolean(result.fileSearchICloudDriveEnabled),
         });
       }
       if (patch.openAtLogin !== undefined) {

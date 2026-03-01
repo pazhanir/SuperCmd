@@ -465,6 +465,7 @@ contextBridge.exposeInMainWorld('electron', {
     excludedTopLevelDirectories: string[];
     protectedTopLevelDirectories: string[];
     includeProtectedHomeRoots: boolean;
+    includeICloudDrive: boolean;
     lastError: string | null;
   }> => ipcRenderer.invoke('file-search-status'),
   refreshFileSearchIndex: (reason?: string): Promise<{
@@ -478,6 +479,7 @@ contextBridge.exposeInMainWorld('electron', {
     excludedTopLevelDirectories: string[];
     protectedTopLevelDirectories: string[];
     includeProtectedHomeRoots: boolean;
+    includeICloudDrive: boolean;
     lastError: string | null;
   }> => ipcRenderer.invoke('file-search-refresh', reason),
 

@@ -53,6 +53,7 @@ export interface AppSettings {
   hasSeenOnboarding: boolean;
   hasSeenWhisperOnboarding: boolean;
   fileSearchProtectedRootsEnabled: boolean;
+  fileSearchICloudDriveEnabled: boolean;
   ai: AISettings;
   commandMetadata?: Record<string, { subtitle?: string }>;
   debugMode: boolean;
@@ -100,7 +101,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   enabledCommands: [],
   customExtensionFolders: [],
   commandHotkeys: {
-    'system-cursor-prompt': 'Command+Shift+K',
+    'system-cursor-prompt': 'Fn+K',
+    'system-add-to-memory': 'Fn+M',
     'system-supercmd-whisper': 'Command+Shift+W',
     'system-supercmd-whisper-speak-toggle': 'Fn',
     'system-supercmd-speak': 'Command+Shift+S',
@@ -130,6 +132,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   hasSeenOnboarding: false,
   hasSeenWhisperOnboarding: false,
   fileSearchProtectedRootsEnabled: false,
+  fileSearchICloudDriveEnabled: false,
   ai: { ...DEFAULT_AI_SETTINGS },
   debugMode: false,
   fontSize: 'medium',
@@ -304,6 +307,9 @@ export function loadSettings(): AppSettings {
       if (!normalizedCommandId || !normalizedAlias) continue;
       normalizedAliases[normalizedCommandId] = normalizedAlias;
     }
+    if (parsedHotkeys['system-cursor-prompt'] === 'Command+Shift+K') {
+      parsedHotkeys['system-cursor-prompt'] = DEFAULT_SETTINGS.commandHotkeys['system-cursor-prompt'];
+    }
     settingsCache = {
       globalShortcut: parsed.globalShortcut ?? DEFAULT_SETTINGS.globalShortcut,
       openAtLogin: parsed.openAtLogin ?? DEFAULT_SETTINGS.openAtLogin,
@@ -332,6 +338,8 @@ export function loadSettings(): AppSettings {
         parsed.hasSeenWhisperOnboarding ?? false,
       fileSearchProtectedRootsEnabled:
         parsed.fileSearchProtectedRootsEnabled ?? DEFAULT_SETTINGS.fileSearchProtectedRootsEnabled,
+      fileSearchICloudDriveEnabled:
+        parsed.fileSearchICloudDriveEnabled ?? DEFAULT_SETTINGS.fileSearchICloudDriveEnabled,
       ai: { ...DEFAULT_AI_SETTINGS, ...parsed.ai },
       commandMetadata: parsed.commandMetadata ?? {},
       debugMode: parsed.debugMode ?? DEFAULT_SETTINGS.debugMode,

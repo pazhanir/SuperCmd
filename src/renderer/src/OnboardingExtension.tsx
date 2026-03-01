@@ -58,8 +58,8 @@ const permissionTargets: Array<{
 }> = [
   {
     id: 'home-folder',
-    title: 'Home Folder (File Search)',
-    description: 'Required for file search.',
+    title: 'Folder Access',
+    description: 'Required for Desktop, Documents, Downloads, Movies, and iCloud Drive search.',
     url: 'x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders',
     icon: FolderOpen,
     iconTone: 'text-blue-100',
@@ -513,7 +513,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
         } else if (!requested || mode === 'manual' || status === 'not-determined') {
           setPermissionNotes((prev) => ({
             ...prev,
-            [id]: 'Select your Home folder when prompted.',
+            [id]: 'Select your Home folder and iCloud Drive when prompted.',
           }));
         }
       }
@@ -628,7 +628,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     <p className="text-white/88 text-sm mb-2">What gets configured now:</p>
                     <div className="text-white/72 text-sm space-y-1">
                       <p>1. Launcher hotkey and inline prompt defaults</p>
-                      <p>2. Accessibility, Input Monitoring, Speech Recognition, Microphone</p>
+                      <p>2. Folder Access, Accessibility, Input Monitoring, Speech Recognition, Microphone</p>
                       <p>3. Whisper dictation and Read mode practice</p>
                     </div>
                   </div>
@@ -689,7 +689,7 @@ const OnboardingExtension: React.FC<OnboardingExtensionProps> = ({
                     <p className="text-white/90 text-sm font-medium">Current Launcher Hotkey</p>
                   </div>
                   <p className="text-white/62 text-xs mb-5">
-                    Inline prompt default is now Cmd + Shift + K. Configure launcher key below.
+                    AI Prompt uses Fn + K and Memory uses Fn + M by default. Configure launcher key below.
                   </p>
 
                   <div className="flex flex-wrap items-center gap-2 mb-5">
