@@ -3,6 +3,7 @@ import Darwin.C
 import Foundation
 import CoreGraphics
 import IOKit
+import IOKit.hid
 import IOKit.hidsystem
 
 let timeoutTime: Int64 = 30
@@ -23,12 +24,16 @@ let VK_HELP: Int64 = 0x72
 let signalMutex = DispatchSemaphore(value: 1)
 let requestTimeoutSemaphore = DispatchSemaphore(value: 0)
 let responseSemaphore = DispatchSemaphore(value: 0)
+let requestMutex = DispatchSemaphore(value: 1)
 var requestTime: Int64 = 0
 var responseId: Int64 = 0
 var timeoutId: Int64 = 0
 var curId: Int64 = 0
 var output: String = ""
 let eventStatusHandle: NXEventHandle = NXOpenEventStatus()
+let capsLockStateQueue = DispatchQueue(label: "supercmd.keyspy.caps-lock-state")
+let capsLockHidUsagePage: UInt32 = 0x07
+let capsLockHidUsage: UInt32 = 0x39
 
 func getMillis() -> Int64 {
     return Int64(NSDate().timeIntervalSince1970 * 1000)
@@ -40,6 +45,9 @@ func haltPropagation(
     keyCode: Int64,
     location: (Double, Double)
 ) -> Bool {
+    requestMutex.wait()
+    defer { requestMutex.signal() }
+
     curId += 1
     print("\(isMouse ? "MOUSE" : "KEYBOARD"),\(isDown ? "DOWN" : "UP"),\(keyCode),\(location.0),\(location.1),\(curId)")
     fflush(stdout)
@@ -108,7 +116,10 @@ func currentCapsLockState() -> Bool {
 }
 
 var lastKnownCapsLockLockedState = currentCapsLockState()
-var capsLockPhysicalDown = false
+var capsLockCycleActive = false
+var capsLockSuppressNativeCycle = false
+var capsLockIgnoreFlagsChangedUntil: UInt64 = 0
+var capsLockIgnoreFlagsChangedSuppress = false
 
 func applyCapsLockState(_ locked: Bool) {
     if eventStatusHandle != NXEventHandle(MACH_PORT_NULL) {
@@ -139,8 +150,6 @@ func getModifierDownState(event: CGEvent, keyCode: Int64) -> Bool {
         return event.flags.contains(.maskControl)
     case VK_LALT, VK_RALT:
         return event.flags.contains(.maskAlternate)
-    case VK_CAPSLOCK:
-        return !capsLockPhysicalDown
     case VK_FN:
         return event.flags.contains(.maskSecondaryFn)
     case VK_HELP:
@@ -148,6 +157,11 @@ func getModifierDownState(event: CGEvent, keyCode: Int64) -> Bool {
     default:
         return false
     }
+}
+
+func scheduleCapsLockFlagsChangedIgnore(suppress: Bool) {
+    capsLockIgnoreFlagsChangedUntil = DispatchTime.now().uptimeNanoseconds + 150_000_000
+    capsLockIgnoreFlagsChangedSuppress = suppress
 }
 
 func myCGEventTapCallback(
@@ -180,6 +194,53 @@ func myCGEventTapCallback(
 
     if type == .flagsChanged {
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+
+        if keyCode == VK_CAPSLOCK {
+            let now = DispatchTime.now().uptimeNanoseconds
+            var shouldIgnoreFlagsChanged = false
+            var ignoreSuppress = false
+            var shouldEmitCapsLockPress = false
+
+            capsLockStateQueue.sync {
+                if capsLockIgnoreFlagsChangedUntil > now {
+                    shouldIgnoreFlagsChanged = true
+                    ignoreSuppress = capsLockIgnoreFlagsChangedSuppress
+                    capsLockIgnoreFlagsChangedUntil = 0
+                    capsLockIgnoreFlagsChangedSuppress = false
+                } else if !capsLockCycleActive {
+                    capsLockCycleActive = true
+                    shouldEmitCapsLockPress = true
+                } else {
+                    shouldIgnoreFlagsChanged = true
+                    ignoreSuppress = capsLockSuppressNativeCycle
+                }
+            }
+
+            if shouldIgnoreFlagsChanged {
+                return ignoreSuppress ? nil : Unmanaged.passUnretained(event)
+            }
+
+            if !shouldEmitCapsLockPress {
+                return nil
+            }
+
+            let shouldBlock = haltPropagation(
+                isMouse: false,
+                isDown: true,
+                keyCode: keyCode,
+                location: (0, 0)
+            )
+            capsLockStateQueue.sync {
+                capsLockSuppressNativeCycle = shouldBlock
+            }
+            if shouldBlock {
+                restoreCapsLockState(expectedLocked: lastKnownCapsLockLockedState)
+                return nil
+            }
+            lastKnownCapsLockLockedState.toggle()
+            return Unmanaged.passUnretained(event)
+        }
+
         let isDown = getModifierDownState(event: event, keyCode: keyCode)
         let shouldBlock = haltPropagation(
             isMouse: false,
@@ -188,17 +249,7 @@ func myCGEventTapCallback(
             location: (0, 0)
         )
         if shouldBlock {
-            if keyCode == VK_CAPSLOCK {
-                restoreCapsLockState(expectedLocked: lastKnownCapsLockLockedState)
-                capsLockPhysicalDown = isDown
-            }
             return nil
-        }
-        if keyCode == VK_CAPSLOCK && isDown {
-            lastKnownCapsLockLockedState.toggle()
-        }
-        if keyCode == VK_CAPSLOCK {
-            capsLockPhysicalDown = isDown
         }
         return Unmanaged.passUnretained(event)
     }
@@ -228,6 +279,41 @@ func myCGEventTapCallback(
     }
 
     return Unmanaged.passUnretained(event)
+}
+
+let hidManager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+
+let hidInputCallback: IOHIDValueCallback = { _, _, _, value in
+    let element = IOHIDValueGetElement(value)
+    let usagePage = IOHIDElementGetUsagePage(element)
+    let usage = IOHIDElementGetUsage(element)
+    if usagePage != capsLockHidUsagePage || usage != capsLockHidUsage {
+        return
+    }
+
+    let isPressed = IOHIDValueGetIntegerValue(value) != 0
+    if isPressed {
+        return
+    }
+
+    var shouldEmitRelease = false
+    capsLockStateQueue.sync {
+        if capsLockCycleActive {
+            shouldEmitRelease = true
+            capsLockCycleActive = false
+            scheduleCapsLockFlagsChangedIgnore(suppress: capsLockSuppressNativeCycle)
+            capsLockSuppressNativeCycle = false
+        }
+    }
+
+    if shouldEmitRelease {
+        _ = haltPropagation(
+            isMouse: false,
+            isDown: false,
+            keyCode: VK_CAPSLOCK,
+            location: (0, 0)
+        )
+    }
 }
 
 let keyEventMask =
@@ -267,11 +353,21 @@ timeoutThread.async {
     timeoutLoop()
 }
 
+IOHIDManagerSetDeviceMatching(hidManager, nil)
+IOHIDManagerRegisterInputValueCallback(hidManager, hidInputCallback, nil)
+IOHIDManagerScheduleWithRunLoop(hidManager, CFRunLoopGetCurrent(), CFRunLoopMode.commonModes.rawValue)
+let hidOpenResult = IOHIDManagerOpen(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
+if hidOpenResult != kIOReturnSuccess {
+    logErr("Failed to open IOHIDManager: \(hidOpenResult)")
+}
+
 let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
 CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
 CGEvent.tapEnable(tap: eventTap, enable: true)
 CFRunLoopRun()
 
+IOHIDManagerUnscheduleFromRunLoop(hidManager, CFRunLoopGetCurrent(), CFRunLoopMode.commonModes.rawValue)
+IOHIDManagerClose(hidManager, IOOptionBits(kIOHIDOptionsTypeNone))
 if eventStatusHandle != NXEventHandle(MACH_PORT_NULL) {
     NXCloseEventStatus(eventStatusHandle)
 }
