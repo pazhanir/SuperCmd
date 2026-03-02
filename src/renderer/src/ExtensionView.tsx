@@ -2543,7 +2543,7 @@ const nodeBuiltinStubs: Record<string, any> = {
       };
       inst.request = async (config: any = {}) => {
         const method = String(config?.method || 'get').toLowerCase();
-        const url = resolveUrl(config?.url || '', config);
+        const url = String(config?.url || '').trim();
         if (method === 'get' || method === 'delete' || method === 'head' || method === 'options') {
           return inst.get(url, { ...config, method });
         }
