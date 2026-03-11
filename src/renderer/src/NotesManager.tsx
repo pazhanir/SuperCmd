@@ -357,6 +357,87 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
   const pendingFocusRef = useRef<{ id: string; offset: number } | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ─── Undo / Redo History ───────────────────────────────────
+  const historyRef = useRef<Block[][]>([]);
+  const historyIdxRef = useRef(-1);
+  const historyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isUndoRedoRef = useRef(false);
+
+  // Snapshot current DOM content into blocks for accurate history
+  const snapshotBlocks = useCallback((): Block[] => {
+    return blocksRef.current.map(b => {
+      const el = blockElsRef.current.get(b.id);
+      return { ...b, content: el?.textContent ?? b.content };
+    });
+  }, []);
+
+  // Push a snapshot to history (debounced for typing, immediate for structural changes)
+  const pushHistory = useCallback((immediate?: boolean) => {
+    if (isUndoRedoRef.current) return;
+    const push = () => {
+      const snapshot = snapshotBlocks().map(b => ({ ...b }));
+      const stack = historyRef.current.slice(0, historyIdxRef.current + 1);
+      stack.push(snapshot);
+      // Cap at 100 entries
+      if (stack.length > 100) stack.shift();
+      historyRef.current = stack;
+      historyIdxRef.current = stack.length - 1;
+    };
+    if (immediate) {
+      if (historyTimerRef.current) { clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
+      push();
+    } else {
+      if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+      historyTimerRef.current = setTimeout(push, 500);
+    }
+  }, [snapshotBlocks]);
+
+  // Initialize history with initial state
+  useEffect(() => {
+    const initial = blocksRef.current.map(b => ({ ...b }));
+    historyRef.current = [initial];
+    historyIdxRef.current = 0;
+  }, []);
+
+  const undo = useCallback(() => {
+    if (historyIdxRef.current <= 0) return;
+    // Before undoing, make sure current state is saved
+    if (historyTimerRef.current) { clearTimeout(historyTimerRef.current); historyTimerRef.current = null; }
+    // Save current as top if we haven't already
+    const currentSnapshot = snapshotBlocks().map(b => ({ ...b }));
+    const stack = historyRef.current;
+    // Replace current position with latest DOM state
+    stack[historyIdxRef.current] = currentSnapshot;
+
+    historyIdxRef.current--;
+    const prev = stack[historyIdxRef.current];
+    isUndoRedoRef.current = true;
+    setBlocks(prev.map(b => ({ ...b })));
+    // Sync DOM
+    requestAnimationFrame(() => {
+      for (const b of prev) {
+        const el = blockElsRef.current.get(b.id);
+        if (el && el.textContent !== b.content) el.textContent = b.content;
+      }
+      isUndoRedoRef.current = false;
+    });
+  }, [snapshotBlocks]);
+
+  const redo = useCallback(() => {
+    if (historyIdxRef.current >= historyRef.current.length - 1) return;
+    historyIdxRef.current++;
+    const next = historyRef.current[historyIdxRef.current];
+    isUndoRedoRef.current = true;
+    setBlocks(next.map(b => ({ ...b })));
+    requestAnimationFrame(() => {
+      for (const b of next) {
+        const el = blockElsRef.current.get(b.id);
+        if (el && el.textContent !== b.content) el.textContent = b.content;
+      }
+      isUndoRedoRef.current = false;
+    });
+  }, []);
+
   // Debounced save
   useEffect(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -416,7 +497,8 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
 
     // Normal content update
     setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, content: text } : b));
-  }, [slashMenu]);
+    pushHistory(); // debounced
+  }, [slashMenu, pushHistory]);
 
   // ─── Slash Command Selection ─────────────────────────────────
   const handleSlashSelect = useCallback((type: BlockType) => {
@@ -455,9 +537,24 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
     // If slash menu is open, let it handle navigation keys
     if (slashMenu?.blockId === blockId && ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
 
+    // ─── Undo: ⌘Z ───────────────────────────────────────
+    if (meta && !e.shiftKey && e.key === 'z') {
+      e.preventDefault();
+      undo();
+      return;
+    }
+
+    // ─── Redo: ⌘⇧Z ──────────────────────────────────────
+    if (meta && e.shiftKey && e.key === 'z') {
+      e.preventDefault();
+      redo();
+      return;
+    }
+
     // ─── Enter: split block ──────────────────────────────
     if (e.key === 'Enter' && !e.shiftKey && !meta) {
       e.preventDefault();
+      pushHistory(true); // save state before split
       const offset = getCursorOffset(el);
       const text = el?.textContent || '';
       const before = text.slice(0, offset);
@@ -466,6 +563,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
       // Empty list/checkbox → convert to paragraph
       if (['bullet', 'ordered', 'checkbox'].includes(block.type) && !before && !after) {
         setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, type: 'paragraph' } : b));
+        pushHistory(true);
         return;
       }
 
@@ -488,6 +586,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
         return updated;
       });
       focusBlock(newBlock.id, 0);
+      pushHistory(true);
       return;
     }
 
@@ -497,6 +596,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
       const sel = window.getSelection();
       if (offset === 0 && sel?.isCollapsed) {
         e.preventDefault();
+        pushHistory(true); // save state before merge/convert
         if (block.type !== 'paragraph') {
           // Convert to paragraph
           setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, type: 'paragraph', checked: undefined } : b));
@@ -523,11 +623,14 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
             }
           }
         }
+        pushHistory(true);
         return;
       }
     }
 
     // ─── Arrow navigation between blocks ─────────────────
+
+    // ArrowDown at end of block → start of next block
     if (e.key === 'ArrowDown' && !meta && !e.shiftKey) {
       const offset = getCursorOffset(el);
       const textLen = el?.textContent?.length || 0;
@@ -541,6 +644,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
       }
     }
 
+    // ArrowUp at start of block → end of previous block
     if (e.key === 'ArrowUp' && !meta && !e.shiftKey) {
       const offset = getCursorOffset(el);
       if (offset === 0) {
@@ -553,22 +657,53 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
       }
     }
 
+    // ArrowLeft at start of block → end of previous block
+    if (e.key === 'ArrowLeft' && !meta && !e.shiftKey && !e.altKey) {
+      const offset = getCursorOffset(el);
+      const sel = window.getSelection();
+      if (offset === 0 && sel?.isCollapsed) {
+        const idx = blocksRef.current.findIndex(b => b.id === blockId);
+        if (idx > 0) {
+          e.preventDefault();
+          const prev = blocksRef.current[idx - 1];
+          focusBlock(prev.id, prev.content.length);
+        }
+      }
+    }
+
+    // ArrowRight at end of block → start of next block
+    if (e.key === 'ArrowRight' && !meta && !e.shiftKey && !e.altKey) {
+      const offset = getCursorOffset(el);
+      const textLen = el?.textContent?.length || 0;
+      const sel = window.getSelection();
+      if (offset >= textLen && sel?.isCollapsed) {
+        const idx = blocksRef.current.findIndex(b => b.id === blockId);
+        if (idx < blocksRef.current.length - 1) {
+          e.preventDefault();
+          const next = blocksRef.current[idx + 1];
+          focusBlock(next.id, 0);
+        }
+      }
+    }
+
     // ─── Formatting shortcuts ────────────────────────────
-    if (meta && !e.shiftKey && !e.altKey && e.key === 'b') { e.preventDefault(); wrapSelection('**', '**'); return; }
-    if (meta && !e.shiftKey && !e.altKey && e.key === 'i') { e.preventDefault(); wrapSelection('*', '*'); return; }
-    if (meta && e.shiftKey && e.key === 's') { e.preventDefault(); wrapSelection('~~', '~~'); return; }
-    if (meta && !e.shiftKey && !e.altKey && e.key === 'e') { e.preventDefault(); wrapSelection('`', '`'); return; }
-    if (meta && !e.shiftKey && !e.altKey && e.key === 'u') { e.preventDefault(); wrapSelection('<u>', '</u>'); return; }
+    if (meta && !e.shiftKey && !e.altKey && e.key === 'b') { e.preventDefault(); pushHistory(true); wrapSelection('**', '**'); pushHistory(true); return; }
+    if (meta && !e.shiftKey && !e.altKey && e.key === 'i') { e.preventDefault(); pushHistory(true); wrapSelection('*', '*'); pushHistory(true); return; }
+    if (meta && e.shiftKey && e.key === 's') { e.preventDefault(); pushHistory(true); wrapSelection('~~', '~~'); pushHistory(true); return; }
+    if (meta && !e.shiftKey && !e.altKey && e.key === 'e') { e.preventDefault(); pushHistory(true); wrapSelection('`', '`'); pushHistory(true); return; }
+    if (meta && !e.shiftKey && !e.altKey && e.key === 'u') { e.preventDefault(); pushHistory(true); wrapSelection('<u>', '</u>'); pushHistory(true); return; }
 
     // ─── ⌘+Enter: toggle checkbox ───────────────────────
     if (meta && e.key === 'Enter') {
       if (block.type === 'checkbox') {
         e.preventDefault();
+        pushHistory(true);
         setBlocks(prev => prev.map(b => b.id === blockId ? { ...b, checked: !b.checked } : b));
+        pushHistory(true);
         return;
       }
     }
-  }, [slashMenu, focusBlock]);
+  }, [slashMenu, focusBlock, undo, redo, pushHistory]);
 
   // Wrap selection with prefix/suffix
   const wrapSelection = useCallback((prefix: string, suffix: string) => {
