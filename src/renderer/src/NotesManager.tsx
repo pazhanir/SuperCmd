@@ -797,7 +797,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
             <div className="absolute top-0 left-6 right-2 h-[2px] rounded-full" style={{ background: accentColor }} />
           )}
           <div
-            className={`flex items-start gap-1 rounded-md transition-colors ${dragIdx === idx ? 'opacity-40' : ''}`}
+            className={`flex items-start gap-1 rounded-md transition-all ${dragIdx === idx ? 'opacity-40' : ''} ${focusedBlockId === block.id ? 'bg-[var(--accent)]/[0.06] ring-1 ring-[var(--accent)]/20' : ''}`}
             onDragOver={(e) => handleDragOver(e, idx)}
             onDrop={(e) => handleDrop(e, idx)}
           >
@@ -1690,7 +1690,7 @@ const ActionsOverlay: React.FC<ActionsOverlayProps> = ({ actions, onClose }) => 
   return createPortal(
     <div className="fixed inset-0 z-[9999]">
       <div className="absolute inset-0" onClick={onClose} />
-      <div className="absolute top-[44px] left-1/2 -translate-x-1/2 w-full max-w-[420px] px-4">
+      <div className="absolute bottom-[44px] left-0 w-full max-w-[420px] px-4">
         <div className="bg-[var(--card-bg)] backdrop-blur-xl border border-[var(--ui-divider)] rounded-xl shadow-2xl overflow-hidden">
           <div className="px-3 py-2.5 border-b border-[var(--ui-divider)]">
             <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)}
