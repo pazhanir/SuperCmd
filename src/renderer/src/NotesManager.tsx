@@ -919,7 +919,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ initialContent, onContentChan
                       // Hide raw text when showing inline math overlay
                       focusedBlockId !== block.id && block.content.includes('$') && block.type !== 'code' && 'invisible',
                     ].filter(Boolean).join(' ')}
-                    data-placeholder={block.type === 'h1' ? 'Heading 1' : block.type === 'h2' ? 'Heading 2' : block.type === 'h3' ? 'Heading 3' : block.type === 'paragraph' ? "Type '/' for commands..." : ''}
+                    data-placeholder={focusedBlockId === block.id ? (block.type === 'h1' ? 'Heading 1' : block.type === 'h2' ? 'Heading 2' : block.type === 'h3' ? 'Heading 3' : block.type === 'paragraph' ? "Type '/' for commands..." : '') : ''}
                     style={{ '--placeholder-color': 'var(--text-disabled)' } as any}
                   />
                   {/* Inline math rendered overlay — shown when block is not focused and has $ */}
@@ -1290,11 +1290,6 @@ const EditorView: React.FC<EditorViewProps> = ({
               <span className="truncate text-xs">{charCount(content)} chars</span>
             </span>
           }
-          primaryAction={{
-            label: showToolbar ? 'Hide Format' : 'Format',
-            onClick: () => setShowToolbar(p => !p),
-            shortcut: ['⌥', '⌘', ','],
-          }}
           actionsButton={{ label: 'Actions', onClick: onShowActions, shortcut: ['⌘', 'K'] }}
         />
       </div>
@@ -1663,16 +1658,6 @@ const ActionsOverlay: React.FC<ActionsOverlayProps> = ({ actions, onClose }) => 
     item?.scrollIntoView({ block: 'nearest' });
   }, [selectedIdx]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
-      if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx(i => Math.min(i + 1, filtered.length - 1)); return; }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx(i => Math.max(0, i - 1)); return; }
-      if (e.key === 'Enter' && filtered[selectedIdx] && !filtered[selectedIdx].disabled) { e.preventDefault(); filtered[selectedIdx].execute(); return; }
-    };
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  }, [filtered, selectedIdx, onClose]);
 
   const groupedActions = useMemo(() => {
     const groups: Array<{ section: string; actions: Action[] }> = [];
@@ -1687,7 +1672,7 @@ const ActionsOverlay: React.FC<ActionsOverlayProps> = ({ actions, onClose }) => 
 
   let flatIdx = 0;
 
-  return createPortal(
+  return (
     <div className="fixed inset-0 z-[9999]">
       <div className="absolute inset-0" onClick={onClose} />
       <div className="absolute bottom-[44px] left-0 w-full max-w-[420px] px-4">
@@ -1695,7 +1680,14 @@ const ActionsOverlay: React.FC<ActionsOverlayProps> = ({ actions, onClose }) => 
           <div className="px-3 py-2.5 border-b border-[var(--ui-divider)]">
             <input ref={inputRef} value={query} onChange={(e) => setQuery(e.target.value)}
               placeholder="Search for actions..."
-              className="w-full bg-transparent text-[var(--text-primary)] text-[13px] placeholder:text-[var(--text-subtle)] outline-none" />
+              className="w-full bg-transparent text-[var(--text-primary)] text-[13px] placeholder:text-[var(--text-subtle)] outline-none"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onClose(); return; }
+                if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx(i => Math.min(i + 1, filtered.length - 1)); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx(i => Math.max(0, i - 1)); return; }
+                if (e.key === 'Enter' && filtered[selectedIdx] && !filtered[selectedIdx].disabled) { e.preventDefault(); filtered[selectedIdx].execute(); return; }
+              }}
+            />
           </div>
           <div ref={listRef} className="max-h-[420px] overflow-y-auto custom-scrollbar py-1">
             {groupedActions.map((group, gi) => (
@@ -1731,8 +1723,7 @@ const ActionsOverlay: React.FC<ActionsOverlayProps> = ({ actions, onClose }) => 
           </div>
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 };
 
