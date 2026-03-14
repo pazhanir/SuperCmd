@@ -931,6 +931,7 @@ let memoryStatusHideTimerSeq = 0;
 let settingsWindow: InstanceType<typeof BrowserWindow> | null = null;
 let extensionStoreWindow: InstanceType<typeof BrowserWindow> | null = null;
 let isVisible = false;
+let launcherHiddenWindowRefreshPromise: Promise<void> | null = null;
 let suppressBlurHide = false; // When true, blur won't hide the window (used during file dialogs)
 let oauthBlurHideSuppressionDepth = 0; // Keep launcher alive while OAuth browser flow is in progress
 let oauthBlurHideSuppressionTimer: NodeJS.Timeout | null = null;
@@ -1260,6 +1261,10 @@ let snippetExpanderStdoutBuffer = '';
 let nativeSpeechProcess: any = null;
 let nativeSpeechStdoutBuffer = '';
 let nativeColorPickerPromise: Promise<any> | null = null;
+let desktopCloseMonitorProcess: any = null;
+let desktopCloseMonitorStdoutBuffer = '';
+let desktopCloseMonitorRestartTimer: NodeJS.Timeout | null = null;
+let desktopCloseMonitorShouldRun = false;
 let whisperHoldWatcherProcess: any = null;
 let whisperHoldWatcherStdoutBuffer = '';
 let whisperHoldRequestSeq = 0;
@@ -4543,6 +4548,103 @@ function ensureWhisperHoldWatcherBinary(): string | null {
   }
 }
 
+function ensureDesktopCloseMonitorBinary(): string | null {
+  const fs = require('fs');
+  const binaryPath = getNativeBinaryPath('desktop-close-monitor');
+  if (fs.existsSync(binaryPath)) return binaryPath;
+  try {
+    const { execFileSync } = require('child_process');
+    const sourceCandidates = [
+      path.join(app.getAppPath(), 'src', 'native', 'desktop-close-monitor.swift'),
+      path.join(process.cwd(), 'src', 'native', 'desktop-close-monitor.swift'),
+      path.join(__dirname, '..', '..', 'src', 'native', 'desktop-close-monitor.swift'),
+    ];
+    const sourcePath = sourceCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!sourcePath) {
+      console.warn('[Spaces][native] Source file not found for desktop-close-monitor.swift');
+      return null;
+    }
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    execFileSync('swiftc', [
+      '-O',
+      '-o', binaryPath,
+      sourcePath,
+      '-framework', 'AppKit',
+    ]);
+    return binaryPath;
+  } catch (error) {
+    console.warn('[Spaces][native] Failed to compile desktop close monitor:', error);
+    return null;
+  }
+}
+
+function stopDesktopCloseMonitor(): void {
+  desktopCloseMonitorShouldRun = false;
+  if (desktopCloseMonitorRestartTimer) {
+    clearTimeout(desktopCloseMonitorRestartTimer);
+    desktopCloseMonitorRestartTimer = null;
+  }
+  if (desktopCloseMonitorProcess) {
+    try { desktopCloseMonitorProcess.kill('SIGTERM'); } catch {}
+    desktopCloseMonitorProcess = null;
+  }
+  desktopCloseMonitorStdoutBuffer = '';
+}
+
+function scheduleDesktopCloseMonitorRestart(): void {
+  if (!desktopCloseMonitorShouldRun) return;
+  if (desktopCloseMonitorRestartTimer) return;
+  desktopCloseMonitorRestartTimer = setTimeout(() => {
+    desktopCloseMonitorRestartTimer = null;
+    startDesktopCloseMonitor();
+  }, 180);
+}
+
+function startDesktopCloseMonitor(): void {
+  if (process.platform !== 'darwin') return;
+  desktopCloseMonitorShouldRun = true;
+  if (desktopCloseMonitorProcess) return;
+  const binaryPath = ensureDesktopCloseMonitorBinary();
+  if (!binaryPath) return;
+
+  const { spawn } = require('child_process');
+  const proc = spawn(binaryPath, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+  desktopCloseMonitorProcess = proc;
+  desktopCloseMonitorStdoutBuffer = '';
+
+  proc.stdout.on('data', (chunk: Buffer | string) => {
+    desktopCloseMonitorStdoutBuffer += chunk.toString();
+    const lines = desktopCloseMonitorStdoutBuffer.split('\n');
+    desktopCloseMonitorStdoutBuffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const payload = JSON.parse(trimmed);
+        if (payload?.event === 'desktop-removed') {
+          void refreshHiddenLauncherWindowForDesktopRemoval();
+        }
+      } catch {}
+    }
+  });
+
+  proc.stderr.on('data', (chunk: Buffer | string) => {
+    const text = chunk.toString().trim();
+    if (text) console.warn('[Spaces][native]', text);
+  });
+
+  const handleTermination = () => {
+    if (desktopCloseMonitorProcess === proc) {
+      desktopCloseMonitorProcess = null;
+      desktopCloseMonitorStdoutBuffer = '';
+    }
+    scheduleDesktopCloseMonitorRestart();
+  };
+
+  proc.on('error', handleTermination);
+  proc.on('exit', handleTermination);
+}
+
 function startWhisperHoldWatcher(shortcut: string, holdSeq: number): void {
   if (whisperHoldWatcherProcess) return;
   const config = parseHoldShortcutConfig(shortcut);
@@ -5118,6 +5220,7 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+  const createdMainWindow = mainWindow;
   mainWindow.setWindowButtonVisibility(true);
   applyLiquidGlassToWindow(mainWindow, {
     cornerRadius: 16,
@@ -5314,8 +5417,10 @@ function createWindow(): void {
     }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  createdMainWindow.on('closed', () => {
+    if (mainWindow === createdMainWindow) {
+      mainWindow = null;
+    }
   });
 }
 
@@ -6036,6 +6141,57 @@ async function showWindow(options?: { systemCommandId?: string }): Promise<void>
   if (launcherMode === 'whisper') {
     lastWhisperShownAt = Date.now();
   }
+}
+
+async function runHiddenLauncherWindowRefreshForDesktopRemoval(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (isVisible || launcherMode !== 'default') return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  const targetWindow = mainWindow;
+  let previousOpacity = 1;
+
+  try {
+    try {
+      previousOpacity = targetWindow.getOpacity();
+    } catch {}
+    try {
+      targetWindow.setOpacity(0);
+    } catch {}
+    try {
+      targetWindow.setVisibleOnAllWorkspaces(false);
+    } catch {}
+    try {
+      targetWindow.showInactive();
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    if (mainWindow !== targetWindow || targetWindow.isDestroyed()) return;
+    try {
+      targetWindow.hide();
+    } catch {}
+    try {
+      targetWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    } catch {}
+  } catch (error) {
+    console.warn('[Spaces] Failed to rebind hidden launcher window:', error);
+  } finally {
+    if (!targetWindow.isDestroyed()) {
+      try {
+        targetWindow.setOpacity(previousOpacity);
+      } catch {}
+    }
+  }
+}
+
+function refreshHiddenLauncherWindowForDesktopRemoval(): Promise<void> {
+  if (launcherHiddenWindowRefreshPromise) return launcherHiddenWindowRefreshPromise;
+  const promise = runHiddenLauncherWindowRefreshForDesktopRemoval().finally(() => {
+    if (launcherHiddenWindowRefreshPromise === promise) {
+      launcherHiddenWindowRefreshPromise = null;
+    }
+  });
+  launcherHiddenWindowRefreshPromise = promise;
+  return promise;
 }
 
 function hideWindow(): void {
@@ -12239,6 +12395,7 @@ if let tiff = image?.tiffRepresentation {
   registerGlobalShortcut(settings.globalShortcut);
   registerCommandHotkeys(settings.commandHotkeys);
   registerDevToolsShortcut();
+  startDesktopCloseMonitor();
 
   // Fallback: when another SuperCmd window gains focus (e.g. Settings),
   // close the launcher in default mode even if a native blur event was missed.
@@ -12309,6 +12466,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  stopDesktopCloseMonitor();
   stopInstalledAppsWatchers();
   globalShortcut.unregisterAll();
   if (windowManagerWorkerRestartTimer) {
