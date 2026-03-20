@@ -13,64 +13,121 @@ import * as http from 'http';
 import * as crypto from 'crypto';
 import { loadChatGPTTokens } from './chatgpt-auth';
 
-// ─── Callback-based SSE stream consumer ──────────────────────────
+// ─── Callback-based SSE stream ───────────────────────────────────
+
+export interface StreamCallbacks {
+  onDelta: (text: string) => void;
+  onStatus?: (status: string) => void; // "Searching the web...", "Thinking...", etc.
+}
 
 /**
- * Create an async generator from response 'data' events.
- * Each SSE output_text.delta is yielded individually for real-time streaming.
+ * Stream SSE from an IncomingMessage, calling onDelta for each text chunk
+ * and onStatus for status updates (web search, thinking).
+ * DIRECTLY from the 'data' event handler — zero async overhead, zero buffering.
+ */
+function streamSSEDirect(
+  response: http.IncomingMessage,
+  callbacks: StreamCallbacks,
+  signal?: AbortSignal
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let sseBuffer = '';
+    let settled = false;
+    let searchingNotified = false;
+    let thinkingNotified = false;
+
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err); else resolve();
+    };
+
+    response.on('data', (chunk: Buffer) => {
+      if (settled || signal?.aborted) return;
+      sseBuffer += chunk.toString();
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop() || '';
+      for (const line of lines) {
+        if (settled) break;
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data: ')) continue;
+        const data = trimmed.slice(6);
+        if (!data || data === '[DONE]') continue;
+        try {
+          const evt = JSON.parse(data);
+          const kind: string = evt.type || '';
+
+          if (kind === 'response.output_text.delta') {
+            const delta = evt.delta || '';
+            if (delta) callbacks.onDelta(delta);
+          } else if (kind.includes('web_search_call')) {
+            // Web search in progress
+            if (!searchingNotified && callbacks.onStatus) {
+              callbacks.onStatus('Searching the web...');
+              searchingNotified = true;
+            }
+          } else if (kind === 'response.reasoning_summary_text.delta' || kind === 'response.reasoning_text.delta') {
+            // Model is thinking
+            if (!thinkingNotified && callbacks.onStatus) {
+              callbacks.onStatus('Thinking...');
+              thinkingNotified = true;
+            }
+          } else if (kind === 'response.reasoning_summary_part.added') {
+            if (!thinkingNotified && callbacks.onStatus) {
+              callbacks.onStatus('Thinking...');
+              thinkingNotified = true;
+            }
+          } else if (kind === 'response.failed') {
+            finish(new Error(evt?.response?.error?.message || evt?.error?.message || 'ChatGPT request failed'));
+          } else if (kind === 'response.completed') {
+            finish();
+          }
+        } catch {}
+      }
+    });
+
+    response.on('end', () => finish());
+    response.on('error', (err) => finish(err));
+    if (signal) {
+      signal.addEventListener('abort', () => finish(new Error('Request aborted')), { once: true });
+    }
+  });
+}
+
+/**
+ * Async generator wrapper around streamSSEDirect for backward compat
+ * with functions that still use `yield*`.
  */
 async function* streamResponseSSE(
   response: http.IncomingMessage,
   signal?: AbortSignal
 ): AsyncGenerator<string> {
-  // Push-based async queue: data events push, generator pulls
-  const queue: Array<string | null | Error> = []; // null = done, Error = error
-  let waiting: ((value: void) => void) | null = null;
+  const chunks: string[] = [];
+  let done = false;
+  let error: Error | null = null;
+  let resolve: (() => void) | null = null;
 
-  const notify = () => { if (waiting) { const w = waiting; waiting = null; w(); } };
-
-  let sseBuffer = '';
-  response.on('data', (chunk: Buffer) => {
-    if (signal?.aborted) return;
-    sseBuffer += chunk.toString();
-    const lines = sseBuffer.split('\n');
-    sseBuffer = lines.pop() || '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data: ')) continue;
-      const data = trimmed.slice(6);
-      if (!data || data === '[DONE]') continue;
-      try {
-        const evt = JSON.parse(data);
-        const kind = evt.type;
-        if (kind === 'response.output_text.delta') {
-          const delta = evt.delta || '';
-          if (delta) { queue.push(delta); notify(); }
-        } else if (kind === 'response.failed') {
-          queue.push(new Error(evt?.response?.error?.message || evt?.error?.message || 'ChatGPT request failed'));
-          notify();
-          return;
-        } else if (kind === 'response.completed') {
-          queue.push(null);
-          notify();
-          return;
-        }
-      } catch {}
-    }
+  // Consume via callback, push to array
+  streamSSEDirect(response, {
+    onDelta: (text) => {
+      chunks.push(text);
+      if (resolve) { const r = resolve; resolve = null; r(); }
+    },
+  }, signal).then(() => {
+    done = true;
+    if (resolve) { const r = resolve; resolve = null; r(); }
+  }).catch((e) => {
+    error = e;
+    done = true;
+    if (resolve) { const r = resolve; resolve = null; r(); }
   });
-
-  response.on('end', () => { queue.push(null); notify(); });
-  response.on('error', (err) => { queue.push(err); notify(); });
 
   while (true) {
     if (signal?.aborted) return;
-    while (queue.length === 0) {
-      await new Promise<void>((r) => { waiting = r; });
-    }
-    const item = queue.shift()!;
-    if (item === null || item === undefined) return;
-    if (item instanceof Error) throw item;
-    yield item as string;
+    if (chunks.length > 0) { yield chunks.shift()!; continue; }
+    if (error) throw error;
+    if (done) return;
+    await new Promise<void>((r) => { resolve = r; });
   }
 }
 
@@ -219,6 +276,7 @@ export async function* streamChatGPTAccount(
           'Authorization': `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
+          'Accept-Encoding': 'identity',
           'chatgpt-account-id': tokens.accountId,
           'OpenAI-Beta': 'responses=experimental',
           'session_id': sessionId,
@@ -262,6 +320,65 @@ export async function* streamChatGPTAccount(
   });
 
   yield* streamResponseSSE(response, signal);
+}
+
+// ─── Direct callback streaming (bypasses async generators) ───────
+
+export async function streamChatGPTDirect(
+  modelId: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string; images?: string[] }>,
+  onChunk: (text: string) => void,
+  opts?: { systemPrompt?: string; sessionId?: string; signal?: AbortSignal; onStatus?: (status: string) => void }
+): Promise<void> {
+  const tokens = await loadChatGPTTokens();
+  if (!tokens) throw new Error('ChatGPT session expired. Please sign in again in Settings → AI.');
+
+  const mc = CHATGPT_MODELS[modelId] || { upstreamId: modelId, reasoning: 'medium' };
+  const items = convertMessageHistoryToInput(messages);
+  const sid = opts?.sessionId || generateSessionId(opts?.systemPrompt, messages[0]?.content || '');
+  const effort = mc.reasoning || 'medium';
+  const rp: any = { effort };
+  if (effort !== 'none') rp.summary = 'auto';
+
+  const payload: any = {
+    model: mc.upstreamId, instructions: opts?.systemPrompt || 'You are a helpful assistant.',
+    input: items, tools: [{ type: 'web_search' }], tool_choice: 'auto',
+    parallel_tool_calls: false, store: false, stream: true,
+    prompt_cache_key: sid, reasoning: rp,
+  };
+  if (effort !== 'none') payload.include = ['reasoning.encrypted_content'];
+
+  const body = JSON.stringify(payload);
+  const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+    const url = new URL(RESPONSES_URL);
+    const req = https.request({
+      hostname: url.hostname, path: url.pathname, method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${tokens.accessToken}`, 'Content-Type': 'application/json',
+        'Accept': 'text/event-stream', 'Accept-Encoding': 'identity',
+        'chatgpt-account-id': tokens.accountId,
+        'OpenAI-Beta': 'responses=experimental', 'session_id': sid,
+      },
+    }, (res) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        let errB = ''; res.on('data', (c) => { errB += c; });
+        res.on('end', () => {
+          let m = `HTTP ${res.statusCode}`;
+          try { const p = JSON.parse(errB); m = p?.error?.message || p?.detail || m; } catch {}
+          reject(new Error(m));
+        }); return;
+      }
+      resolve(res);
+    });
+    req.on('error', reject);
+    if (opts?.signal) {
+      if (opts.signal.aborted) { req.destroy(); reject(new Error('aborted')); return; }
+      opts.signal.addEventListener('abort', () => { req.destroy(); }, { once: true });
+    }
+    req.write(body); req.end();
+  });
+
+  await streamSSEDirect(response, { onDelta: onChunk, onStatus: opts?.onStatus }, opts?.signal);
 }
 
 // ─── Multi-turn streaming ────────────────────────────────────────
@@ -320,6 +437,7 @@ export async function* streamChatGPTAccountMultiTurn(
           'Authorization': `Bearer ${tokens.accessToken}`,
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
+          'Accept-Encoding': 'identity',
           'chatgpt-account-id': tokens.accountId,
           'OpenAI-Beta': 'responses=experimental',
           'session_id': effectiveSessionId,

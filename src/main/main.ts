@@ -18,8 +18,8 @@ import { getAvailableCommands, executeCommand, invalidateCache } from './command
 import { loadSettings, saveSettings, setOAuthToken, getOAuthToken, removeOAuthToken } from './settings-store';
 import type { AppSettings } from './settings-store';
 import { streamAI, isAIAvailable, transcribeAudio, streamAIMultiTurn } from './ai-provider';
-import { startOAuthLogin, chatgptLogout, getChatGPTLoginStatus } from './chatgpt-auth';
-import { getChatGPTModelList } from './chatgpt-upstream';
+import { startOAuthLogin, chatgptLogout, getChatGPTLoginStatus, cancelOAuthLogin } from './chatgpt-auth';
+import { getChatGPTModelList, streamChatGPTDirect } from './chatgpt-upstream';
 import {
   initAiChatStore, getAllConversations, getConversation, createConversation,
   updateConversation, addMessageToConversation, deleteConversation,
@@ -12999,6 +12999,10 @@ if let tiff = image?.tiffRepresentation {
     return { success: true };
   });
 
+  ipcMain.handle('chatgpt-cancel-login', () => {
+    cancelOAuthLogin();
+  });
+
   ipcMain.handle('chatgpt-login-status', () => {
     return getChatGPTLoginStatus();
   });
@@ -13065,26 +13069,54 @@ if let tiff = image?.tiffRepresentation {
 
         // Use model override from chat window if provided, else conversation default
         const effectiveModel = modelOverride || updatedConvo.model || undefined;
+        const msgArray = updatedConvo.messages.map((m) => ({ role: m.role, content: m.content, images: (m as any).images }));
 
-        const gen = streamAIMultiTurn(s.ai, {
-          messages: updatedConvo.messages.map((m) => ({ role: m.role, content: m.content, images: (m as any).images })),
-          model: effectiveModel,
-          systemPrompt: mergedSystemPrompt || undefined,
-          sessionId: updatedConvo.sessionId,
-          signal: controller.signal,
-        });
+        // For chatgpt-account: use direct callback streaming (no async generator)
+        // to ensure tokens are sent to IPC the instant they arrive from the API
+        if (s.ai?.provider === 'chatgpt-account' || (effectiveModel && effectiveModel.startsWith('chatgpt-'))) {
+          const modelId = effectiveModel?.replace(/^chatgpt-/, '') || s.ai?.chatgptAccountModel || 'gpt-5';
+          let fullResponse = '';
 
-        let fullResponse = '';
-        for await (const chunk of gen) {
-          if (controller.signal.aborted) break;
-          fullResponse += chunk;
-          event.sender.send('ai-chat-stream-chunk', { requestId, chunk });
-        }
+          await streamChatGPTDirect(modelId, msgArray, (chunk) => {
+            if (controller.signal.aborted) return;
+            fullResponse += chunk;
+            event.sender.send('ai-chat-stream-chunk', { requestId, chunk });
+          }, {
+            systemPrompt: mergedSystemPrompt || undefined,
+            sessionId: updatedConvo.sessionId,
+            signal: controller.signal,
+            onStatus: (status) => {
+              if (!controller.signal.aborted) {
+                event.sender.send('ai-chat-stream-status', { requestId, status });
+              }
+            },
+          });
 
-        if (!controller.signal.aborted) {
-          // Save assistant response
-          addMessageToConversation(conversationId, { role: 'assistant', content: fullResponse });
-          event.sender.send('ai-chat-stream-done', { requestId });
+          if (!controller.signal.aborted) {
+            addMessageToConversation(conversationId, { role: 'assistant', content: fullResponse });
+            event.sender.send('ai-chat-stream-done', { requestId });
+          }
+        } else {
+          // Other providers: use async generator (works fine for OpenAI/Anthropic/etc)
+          const gen = streamAIMultiTurn(s.ai, {
+            messages: msgArray,
+            model: effectiveModel,
+            systemPrompt: mergedSystemPrompt || undefined,
+            sessionId: updatedConvo.sessionId,
+            signal: controller.signal,
+          });
+
+          let fullResponse = '';
+          for await (const chunk of gen) {
+            if (controller.signal.aborted) break;
+            fullResponse += chunk;
+            event.sender.send('ai-chat-stream-chunk', { requestId, chunk });
+          }
+
+          if (!controller.signal.aborted) {
+            addMessageToConversation(conversationId, { role: 'assistant', content: fullResponse });
+            event.sender.send('ai-chat-stream-done', { requestId });
+          }
         }
       } catch (e: any) {
         if (!controller.signal.aborted) {

@@ -8,7 +8,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Plus, Search, Trash2, Pin, PinOff, Pencil, Sparkles, Send,
-  MessageSquare, Check, X, ImagePlus,
+  MessageSquare, Check, X, ImagePlus, Square,
 } from 'lucide-react';
 import type { Conversation, ChatMessageData } from '../../types/electron';
 
@@ -40,6 +40,7 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
   const [inputValue, setInputValue] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
+  const [streamingStatus, setStreamingStatus] = useState('');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
@@ -129,12 +130,16 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
 
   useEffect(() => {
     const cleanupChunk = window.electron.onAiChatStreamChunk((d) => {
-      if (d.requestId === requestIdRef.current) setStreamingText((p) => p + d.chunk);
+      if (d.requestId === requestIdRef.current) {
+        setStreamingStatus(''); // Clear status once real text arrives
+        setStreamingText((p) => p + d.chunk);
+      }
     });
     const cleanupDone = window.electron.onAiChatStreamDone((d) => {
       if (d.requestId === requestIdRef.current) {
         setStreaming(false);
         setStreamingText('');
+        setStreamingStatus('');
         const curId = activeIdRef.current;
         if (curId) window.electron.aiChatGet(curId).then(setActiveConvo);
         window.electron.aiChatGetAll().then(setConversations);
@@ -143,10 +148,16 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
     const cleanupError = window.electron.onAiChatStreamError((d) => {
       if (d.requestId === requestIdRef.current) {
         setStreaming(false);
+        setStreamingStatus('');
         setStreamingText((p) => p + `\n\nError: ${d.error}`);
       }
     });
-    return () => { cleanupChunk(); cleanupDone(); cleanupError(); };
+    const cleanupStatus = window.electron.onAiChatStreamStatus((d) => {
+      if (d.requestId === requestIdRef.current) {
+        setStreamingStatus(d.status);
+      }
+    });
+    return () => { cleanupChunk(); cleanupDone(); cleanupError(); cleanupStatus(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── IPC: open-conversation event from main ─────────────────────
@@ -192,6 +203,7 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
     setInputValue('');
     setPendingImages([]);
     setStreamingText('');
+    setStreamingStatus('');
     setStreaming(true);
 
     if (inputRef.current) inputRef.current.style.height = 'auto';
@@ -213,6 +225,21 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
     const rid = `chat-${Date.now()}`;
     requestIdRef.current = rid;
     window.electron.aiChatSend(rid, convId, msg || 'Describe this image.', chatModel || undefined, images);
+  };
+
+  const handleCancel = () => {
+    if (requestIdRef.current) {
+      window.electron.aiChatCancel(requestIdRef.current);
+    }
+    setStreaming(false);
+    setStreamingStatus('');
+    // If there's partial streaming text, save it as the assistant response
+    if (streamingText && activeId) {
+      window.electron.aiChatAddMessage(activeId, { role: 'assistant', content: streamingText + '\n\n*(cancelled)*' });
+      window.electron.aiChatGet(activeId).then(setActiveConvo);
+    }
+    setStreamingText('');
+    refreshList();
   };
 
   const handleDelete = async (id: string) => {
@@ -280,13 +307,22 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
           className="flex-1 bg-transparent border-none outline-none text-[0.8125rem] text-[var(--text-primary)] placeholder:text-[color:var(--text-subtle)] resize-none min-h-[20px] max-h-[120px] leading-snug disabled:opacity-40"
           style={{ height: 'auto', overflow: 'hidden' }}
         />
-        <button
-          onClick={handleSend}
-          disabled={(!inputValue.trim() && pendingImages.length === 0) || streaming}
-          className="p-1.5 rounded-lg bg-[var(--accent)] text-white disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)] transition-colors flex-shrink-0"
-        >
-          <Send className="w-3.5 h-3.5" />
-        </button>
+        {streaming ? (
+          <button
+            onClick={handleCancel}
+            className="p-1.5 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 border border-[var(--ui-divider)]"
+          >
+            <Square className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={!inputValue.trim() && pendingImages.length === 0}
+            className="p-1.5 rounded-lg bg-[var(--accent)] text-white disabled:opacity-25 disabled:cursor-not-allowed hover:bg-[var(--accent-hover)] transition-colors flex-shrink-0"
+          >
+            <Send className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
       {/* Bottom bar: model selector + image attach */}
       <div className="flex items-center justify-between px-3 pb-2 pt-0">
@@ -471,7 +507,24 @@ const AiChatManager: React.FC<AiChatManagerProps> = ({ initialConversationId }) 
                       <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" />
                       <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" style={{ animationDelay: '0.15s' }} />
                       <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-pulse" style={{ animationDelay: '0.3s' }} />
+                      {streamingStatus && (
+                        <span className="ml-1 text-[var(--text-subtle)]">{streamingStatus}</span>
+                      )}
                     </div>
+                  </div>
+                )}
+
+                {/* Cancel button while streaming */}
+                {streaming && (
+                  <div className="flex justify-center pt-1">
+                    <button
+                      onClick={handleCancel}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-[0.75rem] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors border border-[var(--ui-divider)] hover:border-[var(--text-subtle)]"
+                      style={{ background: 'rgba(var(--on-surface-rgb), 0.04)' }}
+                    >
+                      <Square className="w-3 h-3" />
+                      Stop
+                    </button>
                   </div>
                 )}
 

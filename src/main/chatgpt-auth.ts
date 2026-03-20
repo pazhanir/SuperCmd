@@ -252,6 +252,19 @@ export function chatgptLogout(): void {
   saveSettings({ ai: { ...restAI, chatgptAccountTokens: undefined } });
 }
 
+// Module-level reference to cancel an active login
+let activeLoginCleanup: (() => void) | null = null;
+
+/**
+ * Cancel any in-progress OAuth login, freeing port 1455.
+ */
+export function cancelOAuthLogin(): void {
+  if (activeLoginCleanup) {
+    activeLoginCleanup();
+    activeLoginCleanup = null;
+  }
+}
+
 /**
  * Start the OAuth login flow:
  * 1. Generate PKCE + state
@@ -267,16 +280,28 @@ export async function startOAuthLogin(
   const { codeVerifier, codeChallenge } = generatePKCE();
   const state = crypto.randomBytes(32).toString('hex');
 
+  // Cancel any previous login attempt
+  cancelOAuthLogin();
+
   return new Promise<ChatGPTAccountTokens>((resolve, reject) => {
     let settled = false;
     let server: http.Server | null = null;
 
     const cleanup = () => {
+      activeLoginCleanup = null;
       if (server) {
-        try {
-          server.close();
-        } catch {}
+        try { server.close(); } catch {}
         server = null;
+      }
+    };
+
+    // Register module-level cancel so external code can abort
+    activeLoginCleanup = () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        cleanup();
+        reject(new Error('Login cancelled.'));
       }
     };
 

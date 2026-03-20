@@ -739,13 +739,14 @@ export interface ElectronAPI {
   aiAsk: (requestId: string, prompt: string, options?: { model?: string; creativity?: number; systemPrompt?: string }) => Promise<void>;
   aiCancel: (requestId: string) => Promise<void>;
   aiIsAvailable: () => Promise<boolean>;
-  onAIStreamChunk: (callback: (data: { requestId: string; chunk: string }) => void) => void;
-  onAIStreamDone: (callback: (data: { requestId: string }) => void) => void;
-  onAIStreamError: (callback: (data: { requestId: string; error: string }) => void) => void;
+  onAIStreamChunk: (callback: (data: { requestId: string; chunk: string }) => void) => () => void;
+  onAIStreamDone: (callback: (data: { requestId: string }) => void) => () => void;
+  onAIStreamError: (callback: (data: { requestId: string; error: string }) => void) => () => void;
 
   // ChatGPT Account Login
   chatgptLogin: () => Promise<{ success: boolean; accountId?: string; error?: string }>;
   chatgptLogout: () => Promise<{ success: boolean }>;
+  chatgptCancelLogin: () => Promise<void>;
   chatgptLoginStatus: () => Promise<{ loggedIn: boolean; accountId?: string }>;
   chatgptModels: () => Promise<Array<{ id: string; label: string }>>;
   onChatGPTLoginProgress: (callback: (status: string) => void) => () => void;
@@ -765,6 +766,7 @@ export interface ElectronAPI {
   onAiChatStreamChunk: (callback: (data: { requestId: string; chunk: string }) => void) => () => void;
   onAiChatStreamDone: (callback: (data: { requestId: string }) => void) => () => void;
   onAiChatStreamError: (callback: (data: { requestId: string; error: string }) => void) => () => void;
+  onAiChatStreamStatus: (callback: (data: { requestId: string; status: string }) => void) => () => void;
   onAiChatOpenConversation: (callback: (conversationId: string) => void) => () => void;
 
   whisperRefineTranscript: (

@@ -754,6 +754,8 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('chatgpt-login'),
   chatgptLogout: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke('chatgpt-logout'),
+  chatgptCancelLogin: (): Promise<void> =>
+    ipcRenderer.invoke('chatgpt-cancel-login'),
   chatgptLoginStatus: (): Promise<{ loggedIn: boolean; accountId?: string }> =>
     ipcRenderer.invoke('chatgpt-login-status'),
   chatgptModels: (): Promise<Array<{ id: string; label: string }>> =>
@@ -801,6 +803,11 @@ contextBridge.exposeInMainWorld('electron', {
     const listener = (_event: any, data: any) => callback(data);
     ipcRenderer.on('ai-chat-stream-error', listener);
     return () => { ipcRenderer.removeListener('ai-chat-stream-error', listener); };
+  },
+  onAiChatStreamStatus: (callback: (data: { requestId: string; status: string }) => void) => {
+    const listener = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('ai-chat-stream-status', listener);
+    return () => { ipcRenderer.removeListener('ai-chat-stream-status', listener); };
   },
   onAiChatOpenConversation: (callback: (conversationId: string) => void) => {
     const listener = (_event: any, id: string) => callback(id);

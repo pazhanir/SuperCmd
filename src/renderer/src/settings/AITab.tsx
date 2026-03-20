@@ -1047,8 +1047,15 @@ const AITab: React.FC = () => {
                             return;
                           }
                           if (p.id === 'chatgpt-account') {
-                            if (!chatgptLoggedIn && !chatgptLoggingIn) {
-                              // Select provider and start login
+                            if (chatgptLoggingIn) {
+                              // Cancel login — close the OAuth server on port 1455
+                              window.electron.chatgptCancelLogin();
+                              setChatgptLoggingIn(false);
+                              setChatgptLoginProgress('');
+                              setChatgptLoginError('');
+                              return;
+                            }
+                            if (!chatgptLoggedIn) {
                               updateAI({ provider: p.id, defaultModel: 'chatgpt-gpt-5' });
                               handleChatGPTLogin();
                             } else {
@@ -1083,7 +1090,7 @@ const AITab: React.FC = () => {
                         </div>
                         <div className="text-[0.625rem] text-[var(--text-subtle)] mt-0.5 leading-tight">
                           {p.id === 'chatgpt-account' && chatgptLoggingIn
-                            ? (chatgptLoginProgress || 'Signing in...')
+                            ? (chatgptLoginProgress || 'Signing in... click to cancel')
                             : p.id === 'chatgpt-account' && chatgptLoggedIn
                               ? 'Connected'
                               : p.description}
