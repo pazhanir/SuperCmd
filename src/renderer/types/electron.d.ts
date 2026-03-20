@@ -154,8 +154,16 @@ export interface ExtensionBundle {
   error?: string;
 }
 
+export interface ChatGPTAccountTokens {
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  accountId: string;
+  lastRefresh: string;
+}
+
 export interface AISettings {
-  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible';
+  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible' | 'chatgpt-account';
   openaiApiKey: string;
   anthropicApiKey: string;
   geminiApiKey: string;
@@ -179,6 +187,8 @@ export interface AISettings {
   openaiCompatibleBaseUrl: string;
   openaiCompatibleApiKey: string;
   openaiCompatibleModel: string;
+  chatgptAccountTokens?: ChatGPTAccountTokens;
+  chatgptAccountModel: string;
 }
 
 export interface EdgeTtsVoice {
@@ -711,6 +721,14 @@ export interface ElectronAPI {
   onAIStreamChunk: (callback: (data: { requestId: string; chunk: string }) => void) => void;
   onAIStreamDone: (callback: (data: { requestId: string }) => void) => void;
   onAIStreamError: (callback: (data: { requestId: string; error: string }) => void) => void;
+
+  // ChatGPT Account Login
+  chatgptLogin: () => Promise<{ success: boolean; accountId?: string; error?: string }>;
+  chatgptLogout: () => Promise<{ success: boolean }>;
+  chatgptLoginStatus: () => Promise<{ loggedIn: boolean; accountId?: string }>;
+  chatgptModels: () => Promise<Array<{ id: string; label: string }>>;
+  onChatGPTLoginProgress: (callback: (status: string) => void) => () => void;
+
   whisperRefineTranscript: (
     transcript: string
   ) => Promise<{ correctedText: string; source: 'ai' | 'heuristic' | 'raw' }>;

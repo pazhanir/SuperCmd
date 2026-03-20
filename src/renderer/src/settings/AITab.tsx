@@ -40,6 +40,7 @@ import {
 } from '../utils/voice-cache';
 
 const getProviderOptions = (t: (key: string) => string) => [
+  { id: 'chatgpt-account' as const, label: 'ChatGPT Account', description: 'Sign in with your ChatGPT Plus/Pro account' },
   { id: 'openai' as const, label: t('settings.ai.llm.provider.openai'), description: t('settings.ai.llm.providerDescriptions.openai') },
   { id: 'anthropic' as const, label: t('settings.ai.llm.provider.anthropic'), description: t('settings.ai.llm.providerDescriptions.anthropic') },
   { id: 'gemini' as const, label: t('settings.ai.llm.provider.gemini'), description: t('settings.ai.llm.providerDescriptions.gemini') },
@@ -59,6 +60,15 @@ const getWhisperSttOptions = (t: (key: string) => string) => [
 ];
 
 const MODELS_BY_PROVIDER: Record<string, { id: string; label: string }[]> = {
+  'chatgpt-account': [
+    { id: 'chatgpt-gpt-5', label: 'GPT-5' },
+    { id: 'chatgpt-gpt-5.4', label: 'GPT-5.4' },
+    { id: 'chatgpt-gpt-5.2', label: 'GPT-5.2' },
+    { id: 'chatgpt-gpt-5.1', label: 'GPT-5.1' },
+    { id: 'chatgpt-gpt-5-codex', label: 'GPT-5 Codex' },
+    { id: 'chatgpt-codex-mini', label: 'Codex Mini' },
+    { id: 'chatgpt-gpt-4o', label: 'GPT-4o' },
+  ],
   openai: [
     { id: 'openai-gpt-4o', label: 'GPT-4o' },
     { id: 'openai-gpt-4o-mini', label: 'GPT-4o Mini' },
@@ -266,12 +276,21 @@ const AITab: React.FC = () => {
   const [parakeetModelLoading, setParakeetModelLoading] = useState(false);
   const [qwen3ModelStatus, setQwen3ModelStatus] = useState<Qwen3ModelStatus | null>(null);
   const [qwen3ModelLoading, setQwen3ModelLoading] = useState(false);
+  const [chatgptLoggedIn, setChatgptLoggedIn] = useState(false);
+  const [chatgptAccountId, setChatgptAccountId] = useState('');
+  const [chatgptLoggingIn, setChatgptLoggingIn] = useState(false);
+  const [chatgptLoginProgress, setChatgptLoginProgress] = useState('');
+  const [chatgptLoginError, setChatgptLoginError] = useState('');
   const settingsRef = useRef<AppSettings | null>(null);
   const pullingModelRef = useRef<string | null>(null);
   const selectingOllamaDefaultRef = useRef(false);
 
   useEffect(() => {
     window.electron.getSettings().then(setSettings);
+    window.electron.chatgptLoginStatus().then((status) => {
+      setChatgptLoggedIn(status.loggedIn);
+      setChatgptAccountId(status.accountId || '');
+    });
   }, []);
 
   useEffect(() => {
@@ -362,6 +381,49 @@ const AITab: React.FC = () => {
     setSettings(updated);
     setSaveStatus('saved');
     setTimeout(() => setSaveStatus('idle'), 1600);
+  };
+
+  const handleChatGPTLogin = async () => {
+    setChatgptLoggingIn(true);
+    setChatgptLoginError('');
+    setChatgptLoginProgress('');
+
+    const unsub = window.electron.onChatGPTLoginProgress((status) => {
+      setChatgptLoginProgress(status);
+    });
+
+    try {
+      const result = await window.electron.chatgptLogin();
+      if (result.success) {
+        setChatgptLoggedIn(true);
+        setChatgptAccountId(result.accountId || '');
+        setChatgptLoginProgress('');
+        // Re-fetch settings from main to pick up the tokens that startOAuthLogin saved,
+        // then set the provider. Without this, updateAI would overwrite the tokens.
+        const freshSettings = await window.electron.getSettings();
+        setSettings(freshSettings);
+        const freshAI = freshSettings.ai;
+        const newAI = { ...freshAI, provider: 'chatgpt-account' as const, defaultModel: 'chatgpt-gpt-5' };
+        const updated = await window.electron.saveSettings({ ai: newAI } as any);
+        setSettings(updated);
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 1600);
+      } else {
+        setChatgptLoginError(result.error || 'Login failed');
+      }
+    } catch (e: any) {
+      setChatgptLoginError(e?.message || 'Login failed');
+    } finally {
+      setChatgptLoggingIn(false);
+      unsub();
+    }
+  };
+
+  const handleChatGPTLogout = async () => {
+    await window.electron.chatgptLogout();
+    setChatgptLoggedIn(false);
+    setChatgptAccountId('');
+    setChatgptLoginError('');
   };
 
   const refreshWhisperCppModelStatus = useCallback(async () => {
@@ -631,7 +693,9 @@ const AITab: React.FC = () => {
           id: `openai-compatible-${ai.openaiCompatibleModel}`,
           label: ai.openaiCompatibleModel,
         }]
-      : MODELS_BY_PROVIDER[ai.provider] || [];
+      : ai.provider === 'chatgpt-account'
+        ? MODELS_BY_PROVIDER['chatgpt-account'] || []
+        : MODELS_BY_PROVIDER[ai.provider] || [];
 
   const whisperModelValue = (!ai.speechToTextModel || ai.speechToTextModel === 'default')
     ? 'whispercpp'
@@ -982,6 +1046,10 @@ const AITab: React.FC = () => {
                             updateAI({ provider: p.id, defaultModel: nextDefault });
                             return;
                           }
+                          if (p.id === 'chatgpt-account') {
+                            updateAI({ provider: p.id, defaultModel: 'chatgpt-gpt-5' });
+                            return;
+                          }
                           updateAI({ provider: p.id, defaultModel: '' });
                         }}
                         className={`rounded-md border px-2 py-2 text-left transition-colors ${
@@ -996,6 +1064,56 @@ const AITab: React.FC = () => {
                     ))}
                   </div>
                 </div>
+
+                {ai.provider === 'chatgpt-account' && (
+                  <div className="rounded-md border border-[var(--ui-divider)] bg-[var(--ui-segment-bg)] px-3 py-3 space-y-2.5">
+                    {chatgptLoggedIn ? (
+                      <>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full bg-green-400" />
+                          <span className="text-[0.75rem] text-green-400/90 font-medium">Connected</span>
+                        </div>
+                        {chatgptAccountId && (
+                          <p className="text-[0.625rem] text-[var(--text-subtle)]">
+                            Account: {chatgptAccountId.slice(0, 20)}{chatgptAccountId.length > 20 ? '...' : ''}
+                          </p>
+                        )}
+                        <button
+                          onClick={handleChatGPTLogout}
+                          className="px-3 py-1.5 text-xs text-red-400 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-md transition-colors"
+                        >
+                          Sign Out
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[0.75rem] text-[var(--text-muted)] leading-snug">
+                          Sign in with your ChatGPT account to use GPT-5 models without an API key. Requires ChatGPT Plus, Pro, or Team.
+                        </p>
+                        <button
+                          onClick={handleChatGPTLogin}
+                          disabled={chatgptLoggingIn}
+                          className="flex items-center gap-2 px-3 py-1.5 text-xs bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white rounded-md transition-colors disabled:opacity-50"
+                        >
+                          {chatgptLoggingIn ? (
+                            <>
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                              {chatgptLoginProgress || 'Signing in...'}
+                            </>
+                          ) : (
+                            'Sign in with ChatGPT'
+                          )}
+                        </button>
+                        {chatgptLoginError && (
+                          <div className="flex items-start gap-1.5 text-[0.6875rem] text-red-400">
+                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                            <span>{chatgptLoginError}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {ai.provider === 'ollama' && (
                   <div>

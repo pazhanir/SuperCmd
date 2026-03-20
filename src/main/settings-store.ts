@@ -9,8 +9,16 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
+export interface ChatGPTAccountTokens {
+  accessToken: string;
+  refreshToken: string;
+  idToken: string;
+  accountId: string;
+  lastRefresh: string; // ISO timestamp
+}
+
 export interface AISettings {
-  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible';
+  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible' | 'chatgpt-account';
   openaiApiKey: string;
   anthropicApiKey: string;
   geminiApiKey: string;
@@ -34,6 +42,8 @@ export interface AISettings {
   openaiCompatibleBaseUrl: string;
   openaiCompatibleApiKey: string;
   openaiCompatibleModel: string;
+  chatgptAccountTokens?: ChatGPTAccountTokens;
+  chatgptAccountModel: string;
 }
 
 export type HyperKeySourceKey =
@@ -129,6 +139,8 @@ const DEFAULT_AI_SETTINGS: AISettings = {
   openaiCompatibleBaseUrl: '',
   openaiCompatibleApiKey: '',
   openaiCompatibleModel: '',
+  chatgptAccountTokens: undefined,
+  chatgptAccountModel: 'gpt-5',
 };
 
 const DEFAULT_SETTINGS: AppSettings = {

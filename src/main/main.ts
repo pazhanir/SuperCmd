@@ -18,6 +18,8 @@ import { getAvailableCommands, executeCommand, invalidateCache } from './command
 import { loadSettings, saveSettings, setOAuthToken, getOAuthToken, removeOAuthToken } from './settings-store';
 import type { AppSettings } from './settings-store';
 import { streamAI, isAIAvailable, transcribeAudio } from './ai-provider';
+import { startOAuthLogin, chatgptLogout, getChatGPTLoginStatus } from './chatgpt-auth';
+import { getChatGPTModelList } from './chatgpt-upstream';
 import { addMemory, buildMemoryContextSystemPrompt } from './memory';
 import {
   createScriptCommandTemplate,
@@ -12897,6 +12899,32 @@ if let tiff = image?.tiffRepresentation {
     const s = loadSettings();
     if (s.ai?.llmEnabled === false) return false;
     return isAIAvailable(s.ai);
+  });
+
+  // ─── IPC: ChatGPT Account Login ──────────────────────────────────
+
+  ipcMain.handle('chatgpt-login', async (event: any) => {
+    try {
+      const tokens = await startOAuthLogin((status) => {
+        try { event.sender.send('chatgpt-login-progress', status); } catch {}
+      });
+      return { success: true, accountId: tokens.accountId };
+    } catch (e: any) {
+      return { success: false, error: e?.message || 'Login failed' };
+    }
+  });
+
+  ipcMain.handle('chatgpt-logout', () => {
+    chatgptLogout();
+    return { success: true };
+  });
+
+  ipcMain.handle('chatgpt-login-status', () => {
+    return getChatGPTLoginStatus();
+  });
+
+  ipcMain.handle('chatgpt-models', () => {
+    return getChatGPTModelList();
   });
 
   ipcMain.handle('whisper-refine-transcript', async (_event: any, transcript: string) => {

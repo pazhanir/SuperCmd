@@ -7,6 +7,8 @@
 import * as https from 'https';
 import * as http from 'http';
 import type { AISettings } from './settings-store';
+import { streamChatGPTAccount } from './chatgpt-upstream';
+import { isChatGPTLoggedIn } from './chatgpt-auth';
 
 export interface AIRequestOptions {
   prompt: string;
@@ -19,7 +21,7 @@ export interface AIRequestOptions {
 // ─── Model routing ────────────────────────────────────────────────────
 
 interface ModelRoute {
-  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible';
+  provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible' | 'chatgpt-account';
   modelId: string;
 }
 
@@ -44,6 +46,14 @@ const MODEL_ROUTES: Record<string, ModelRoute> = {
   'ollama-llama3': { provider: 'ollama', modelId: 'llama3' },
   'ollama-mistral': { provider: 'ollama', modelId: 'mistral' },
   'ollama-codellama': { provider: 'ollama', modelId: 'codellama' },
+  // ChatGPT Account (via Responses API)
+  'chatgpt-gpt-5': { provider: 'chatgpt-account', modelId: 'gpt-5' },
+  'chatgpt-gpt-5.4': { provider: 'chatgpt-account', modelId: 'gpt-5.4' },
+  'chatgpt-gpt-5.2': { provider: 'chatgpt-account', modelId: 'gpt-5.2' },
+  'chatgpt-gpt-5.1': { provider: 'chatgpt-account', modelId: 'gpt-5.1' },
+  'chatgpt-gpt-5-codex': { provider: 'chatgpt-account', modelId: 'gpt-5-codex' },
+  'chatgpt-codex-mini': { provider: 'chatgpt-account', modelId: 'codex-mini' },
+  'chatgpt-gpt-4o': { provider: 'chatgpt-account', modelId: 'gpt-4o' },
 };
 
 function resolveModel(model: string | undefined, config: AISettings): ModelRoute {
@@ -53,10 +63,18 @@ function resolveModel(model: string | undefined, config: AISettings): ModelRoute
   // If the model key is not in our routing table, strip provider prefix and route directly
   if (model) {
     // Order matters: check longer prefixes first to avoid partial matches
-    const prefixes = ['openai-compatible-', 'anthropic-', 'gemini-', 'ollama-', 'openai-'] as const;
+    const prefixes = ['openai-compatible-', 'chatgpt-', 'anthropic-', 'gemini-', 'ollama-', 'openai-'] as const;
+    const prefixProviderMap: Record<string, ModelRoute['provider']> = {
+      'openai-compatible-': 'openai-compatible',
+      'chatgpt-': 'chatgpt-account',
+      'anthropic-': 'anthropic',
+      'gemini-': 'gemini',
+      'ollama-': 'ollama',
+      'openai-': 'openai',
+    };
     for (const prefix of prefixes) {
       if (model.startsWith(prefix)) {
-        return { provider: prefix.slice(0, -1) as 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible', modelId: model.slice(prefix.length) };
+        return { provider: prefixProviderMap[prefix], modelId: model.slice(prefix.length) };
       }
     }
     return { provider: config.provider, modelId: model };
@@ -66,12 +84,20 @@ function resolveModel(model: string | undefined, config: AISettings): ModelRoute
     if (MODEL_ROUTES[config.defaultModel]) {
       return MODEL_ROUTES[config.defaultModel];
     }
-    // Handle dynamic model IDs (e.g. "ollama-llama3.2")
+    // Handle dynamic model IDs (e.g. "ollama-llama3.2", "chatgpt-gpt-5")
     // Order matters: check longer prefixes first to avoid partial matches
-    const prefixes = ['openai-compatible-', 'anthropic-', 'gemini-', 'ollama-', 'openai-'] as const;
-    for (const prefix of prefixes) {
+    const defaultPrefixes = ['openai-compatible-', 'chatgpt-', 'anthropic-', 'gemini-', 'ollama-', 'openai-'] as const;
+    const defaultPrefixProviderMap: Record<string, ModelRoute['provider']> = {
+      'openai-compatible-': 'openai-compatible',
+      'chatgpt-': 'chatgpt-account',
+      'anthropic-': 'anthropic',
+      'gemini-': 'gemini',
+      'ollama-': 'ollama',
+      'openai-': 'openai',
+    };
+    for (const prefix of defaultPrefixes) {
       if (config.defaultModel.startsWith(prefix)) {
-        return { provider: prefix.slice(0, -1) as 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible', modelId: config.defaultModel.slice(prefix.length) };
+        return { provider: defaultPrefixProviderMap[prefix], modelId: config.defaultModel.slice(prefix.length) };
       }
     }
   }
@@ -82,6 +108,7 @@ function resolveModel(model: string | undefined, config: AISettings): ModelRoute
     gemini: 'gemini-2.5-flash',
     ollama: 'llama3',
     'openai-compatible': config.openaiCompatibleModel?.trim() || 'gpt-4o',
+    'chatgpt-account': config.chatgptAccountModel?.trim() || 'gpt-5',
   };
   return { provider: config.provider, modelId: defaults[config.provider] || 'gpt-4o-mini' };
 }
@@ -100,6 +127,8 @@ function hasProviderCredentials(provider: ModelRoute['provider'], config: AISett
       return !!config.ollamaBaseUrl;
     case 'openai-compatible':
       return !!(config.openaiCompatibleBaseUrl && config.openaiCompatibleApiKey);
+    case 'chatgpt-account':
+      return isChatGPTLoggedIn();
     default:
       return false;
   }
@@ -148,6 +177,14 @@ export async function* streamAI(
         route.modelId,
         options.prompt,
         temperature,
+        options.systemPrompt,
+        options.signal
+      );
+      break;
+    case 'chatgpt-account':
+      yield* streamChatGPTAccount(
+        route.modelId,
+        options.prompt,
         options.systemPrompt,
         options.signal
       );

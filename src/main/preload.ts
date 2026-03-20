@@ -743,6 +743,21 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('ai-stream-error', (_event: any, data: any) => callback(data));
   },
 
+  // ─── ChatGPT Account Login ─────────────────────────────────────
+  chatgptLogin: (): Promise<{ success: boolean; accountId?: string; error?: string }> =>
+    ipcRenderer.invoke('chatgpt-login'),
+  chatgptLogout: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('chatgpt-logout'),
+  chatgptLoginStatus: (): Promise<{ loggedIn: boolean; accountId?: string }> =>
+    ipcRenderer.invoke('chatgpt-login-status'),
+  chatgptModels: (): Promise<Array<{ id: string; label: string }>> =>
+    ipcRenderer.invoke('chatgpt-models'),
+  onChatGPTLoginProgress: (callback: (status: string) => void) => {
+    const listener = (_event: any, status: string) => callback(status);
+    ipcRenderer.on('chatgpt-login-progress', listener);
+    return () => { ipcRenderer.removeListener('chatgpt-login-progress', listener); };
+  },
+
   // ─── Ollama Model Management ────────────────────────────────────
   ollamaStatus: (): Promise<{ running: boolean; models: any[] }> =>
     ipcRenderer.invoke('ollama-status'),
