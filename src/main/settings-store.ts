@@ -57,6 +57,7 @@ export interface HyperKeySettings {
 
 export type AppFontSize = 'extra-small' | 'small' | 'medium' | 'large' | 'extra-large';
 export type AppUiStyle = 'default' | 'glassy';
+export type AppNavigationStyle = 'vim' | 'macos';
 export type AppLanguage =
   | 'system'
   | 'en'
@@ -96,6 +97,7 @@ export interface AppSettings {
   launcherBackgroundImageOpacityPercent: number;
   appUpdaterLastCheckedAt: number;
   hyperKey: HyperKeySettings;
+  navigationStyle: AppNavigationStyle;
 }
 
 const DEFAULT_HYPER_KEY_SETTINGS: HyperKeySettings = {
@@ -179,6 +181,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   launcherBackgroundImageOpacityPercent: 45,
   appUpdaterLastCheckedAt: 0,
   hyperKey: { ...DEFAULT_HYPER_KEY_SETTINGS },
+  navigationStyle: 'vim',
 };
 
 let settingsCache: AppSettings | null = null;
@@ -203,6 +206,12 @@ function normalizeUiStyle(value: any): AppUiStyle {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'glassy') return 'glassy';
   return 'default';
+}
+
+function normalizeNavigationStyle(value: any): AppNavigationStyle {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'macos') return 'macos';
+  return 'vim';
 }
 
 function normalizeAppLanguage(value: any): AppLanguage {
@@ -366,6 +375,7 @@ export function loadSettings(): AppSettings {
       appUpdaterLastCheckedAt: Number.isFinite(Number(parsed.appUpdaterLastCheckedAt))
         ? Math.max(0, Number(parsed.appUpdaterLastCheckedAt))
         : DEFAULT_SETTINGS.appUpdaterLastCheckedAt,
+      navigationStyle: normalizeNavigationStyle(parsed.navigationStyle),
     };
   } catch {
     settingsCache = { ...DEFAULT_SETTINGS };
