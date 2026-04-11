@@ -20,7 +20,7 @@ function FileIcon({ filePath, className }: { filePath: string; className: string
       return;
     }
 
-    (window as any).electron?.getFileIconDataUrl?.(filePath, 20)
+    (window as any).electron?.getFileIconDataUrl?.(filePath, 256)
       .then((iconSrc: string | null) => {
         if (cancelled) return;
         fileIconCache.set(filePath, iconSrc || null);

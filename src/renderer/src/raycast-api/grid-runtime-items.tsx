@@ -168,7 +168,7 @@ export function createGridItemsRuntime(resolveIconSrc: (src: string) => string) 
             : 'border-[var(--launcher-card-border)] bg-[var(--launcher-card-bg)] hover:bg-[var(--launcher-card-hover-bg)]'
         }`}
         style={{
-          height: '160px',
+          aspectRatio: '1',
           boxShadow: isSelected
             ? '0 0 0 2px rgba(var(--on-surface-rgb), 0.24), inset 0 0 0 1px rgba(var(--on-surface-rgb), 0.16)'
             : undefined,
