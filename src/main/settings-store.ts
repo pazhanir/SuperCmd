@@ -3,11 +3,28 @@
  *
  * Simple JSON-file persistence for app settings.
  * Stored at ~/Library/Application Support/SuperCmd/settings.json
+ *
+ * Sensitive API keys and OAuth tokens are encrypted via safeStorage and stored
+ * in ~/Library/Application Support/SuperCmd/safe-storage.json.
+ * The settings.json / oauth-tokens.json files never contain these secrets after
+ * the first save — older plain-text values are migrated automatically on first
+ * load (backwards compatible).
  */
 
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import { storeSecret, retrieveSecret, deleteSecret, resetSafeStorageCache } from './safe-storage';
+
+/** AI settings fields that are treated as secrets and stored via safeStorage. */
+const SENSITIVE_AI_FIELDS: ReadonlyArray<keyof AISettings> = [
+  'openaiApiKey',
+  'anthropicApiKey',
+  'geminiApiKey',
+  'elevenlabsApiKey',
+  'supermemoryApiKey',
+  'openaiCompatibleApiKey',
+] as const;
 
 export interface AISettings {
   provider: 'openai' | 'anthropic' | 'gemini' | 'ollama' | 'openai-compatible';
@@ -183,6 +200,33 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 let settingsCache: AppSettings | null = null;
 
+/**
+ * Hydrate sensitive AI fields from safeStorage.
+ *
+ * Priority: safeStorage value > value passed in `ai` (legacy plain-text fallback).
+ * Auto-migration: if a non-empty value is found in `ai` (from settings.json) but
+ * is not yet in safeStorage, it is migrated to safeStorage on the spot so that
+ * subsequent saves will no longer include it in settings.json.
+ */
+function hydrateAiSecrets(ai: AISettings): AISettings {
+  const result = { ...ai };
+  for (const field of SENSITIVE_AI_FIELDS) {
+    const safeValue = retrieveSecret(`ai.${field}`);
+    if (safeValue !== null) {
+      // safeStorage has this secret — use it (overrides any plain-text remnant)
+      (result as any)[field] = safeValue;
+    } else {
+      const legacyValue = (ai as any)[field] as string;
+      if (legacyValue) {
+        // Migrate legacy plain-text value to safeStorage
+        storeSecret(`ai.${field}`, legacyValue);
+        // result[field] already holds legacyValue, no change needed
+      }
+    }
+  }
+  return result;
+}
+
 function normalizeFontSize(value: any): AppFontSize {
   const normalized = String(value || '').trim().toLowerCase().replace(/[_\s]+/g, '-');
   if (normalized === 'x-small') return 'extra-small';
@@ -342,7 +386,7 @@ export function loadSettings(): AppSettings {
         parsed.hasSeenWhisperOnboarding ?? false,
       fileSearchProtectedRootsEnabled:
         parsed.fileSearchProtectedRootsEnabled ?? DEFAULT_SETTINGS.fileSearchProtectedRootsEnabled,
-      ai: { ...DEFAULT_AI_SETTINGS, ...parsed.ai },
+      ai: hydrateAiSecrets({ ...DEFAULT_AI_SETTINGS, ...parsed.ai }),
       hyperKey: { ...DEFAULT_HYPER_KEY_SETTINGS, ...parsed.hyperKey },
       commandMetadata: parsed.commandMetadata ?? {},
       debugMode: parsed.debugMode ?? DEFAULT_SETTINGS.debugMode,
@@ -368,7 +412,10 @@ export function loadSettings(): AppSettings {
         : DEFAULT_SETTINGS.appUpdaterLastCheckedAt,
     };
   } catch {
-    settingsCache = { ...DEFAULT_SETTINGS };
+    settingsCache = {
+      ...DEFAULT_SETTINGS,
+      ai: hydrateAiSecrets({ ...DEFAULT_AI_SETTINGS }),
+    };
   }
 
   return { ...settingsCache };
@@ -397,23 +444,51 @@ export function saveSettings(patch: Partial<AppSettings>): AppSettings {
     ),
   };
 
+  // Persist any AI secret fields that are being changed to safeStorage.
+  if (patch.ai) {
+    for (const field of SENSITIVE_AI_FIELDS) {
+      if (field in patch.ai) {
+        storeSecret(`ai.${field}`, (patch.ai as any)[field] ?? '');
+      }
+    }
+  }
+
+  // Build the object that goes to disk — strip sensitive AI fields so they are
+  // never persisted in plain text. The in-memory cache keeps the full values.
+  const aiForDisk: AISettings = { ...updated.ai };
+  for (const field of SENSITIVE_AI_FIELDS) {
+    (aiForDisk as any)[field] = '';
+  }
+
   try {
-    fs.writeFileSync(getSettingsPath(), JSON.stringify(updated, null, 2));
+    fs.writeFileSync(getSettingsPath(), JSON.stringify({ ...updated, ai: aiForDisk }, null, 2));
   } catch (e) {
     console.error('Failed to save settings:', e);
   }
 
+  // Cache retains the full, hydrated values (with secrets) for in-process reads.
   settingsCache = updated;
   return { ...updated };
 }
 
 export function resetSettingsCache(): void {
   settingsCache = null;
+  oauthTokensCache = null;
+  resetSafeStorageCache();
 }
 
 // ─── OAuth Token Store ────────────────────────────────────────────
 // Stores OAuth tokens per provider in a separate JSON file so they
 // persist across app restarts and window resets.
+//
+// Security: the full token entry (including accessToken) is encrypted via
+// safeStorage and stored in safe-storage.json.  The oauth-tokens.json file is
+// kept as a provider index (keys only — no token values) so that the list of
+// known providers survives a safe-storage cache flush, and for backwards
+// compatibility with existing installations that stored plain-text tokens.
+//
+// Migration: on first load after upgrade, any plain-text token found in
+// oauth-tokens.json is automatically migrated to safeStorage.
 
 interface OAuthTokenEntry {
   accessToken: string;
@@ -423,30 +498,95 @@ interface OAuthTokenEntry {
   obtainedAt: string;
 }
 
+/** Stable key prefix used in safe-storage.json for OAuth entries. */
+const OAUTH_SECRET_PREFIX = 'oauth.';
+
 let oauthTokensCache: Record<string, OAuthTokenEntry> | null = null;
 
 function getOAuthTokensPath(): string {
   return path.join(app.getPath('userData'), 'oauth-tokens.json');
 }
 
-function loadOAuthTokens(): Record<string, OAuthTokenEntry> {
-  if (oauthTokensCache) return oauthTokensCache;
+/**
+ * Load the set of known OAuth provider names from the index file.
+ * Does NOT return token values — those are read from safeStorage.
+ */
+function loadOAuthProviderIndex(): Set<string> {
   try {
     const raw = fs.readFileSync(getOAuthTokensPath(), 'utf-8');
-    oauthTokensCache = JSON.parse(raw) || {};
+    const parsed = JSON.parse(raw) || {};
+    return new Set(Object.keys(parsed));
   } catch {
-    oauthTokensCache = {};
+    return new Set();
   }
-  return oauthTokensCache!;
+}
+
+/**
+ * Persist the provider index (key list) to oauth-tokens.json.
+ * Token values are intentionally omitted — they live in safeStorage.
+ */
+function saveOAuthProviderIndex(providers: Set<string>): void {
+  const index: Record<string, Record<string, never>> = {};
+  for (const p of providers) {
+    index[p] = {};
+  }
+  try {
+    fs.writeFileSync(getOAuthTokensPath(), JSON.stringify(index, null, 2));
+  } catch (e) {
+    console.error('Failed to save OAuth provider index:', e);
+  }
+}
+
+function loadOAuthTokens(): Record<string, OAuthTokenEntry> {
+  if (oauthTokensCache) return oauthTokensCache;
+
+  const result: Record<string, OAuthTokenEntry> = {};
+
+  // Read the legacy file to find all known providers (for backwards compat).
+  let legacyData: Record<string, OAuthTokenEntry> = {};
+  try {
+    const raw = fs.readFileSync(getOAuthTokensPath(), 'utf-8');
+    legacyData = JSON.parse(raw) || {};
+  } catch {
+    legacyData = {};
+  }
+
+  const allProviders = new Set(Object.keys(legacyData));
+
+  // Also pick up any providers that were already migrated (index has empty obj).
+  for (const p of allProviders) {
+    const secretKey = `${OAUTH_SECRET_PREFIX}${p}`;
+    const safeValue = retrieveSecret(secretKey);
+
+    if (safeValue !== null) {
+      // Prefer safeStorage value
+      try {
+        result[p] = JSON.parse(safeValue) as OAuthTokenEntry;
+      } catch {
+        // Corrupted entry — skip
+      }
+    } else if (legacyData[p]?.accessToken) {
+      // Legacy plain-text entry — migrate to safeStorage
+      const entry = legacyData[p];
+      storeSecret(secretKey, JSON.stringify(entry));
+      result[p] = entry;
+    }
+  }
+
+  oauthTokensCache = result;
+  return oauthTokensCache;
 }
 
 function saveOAuthTokens(tokens: Record<string, OAuthTokenEntry>): void {
   oauthTokensCache = tokens;
-  try {
-    fs.writeFileSync(getOAuthTokensPath(), JSON.stringify(tokens, null, 2));
-  } catch (e) {
-    console.error('Failed to save OAuth tokens:', e);
+
+  // Write each token to safeStorage
+  for (const [provider, entry] of Object.entries(tokens)) {
+    storeSecret(`${OAUTH_SECRET_PREFIX}${provider}`, JSON.stringify(entry));
   }
+
+  // Persist only the provider key list to oauth-tokens.json
+  saveOAuthProviderIndex(new Set(Object.keys(tokens)));
 }
 
 export function setOAuthToken(provider: string, token: OAuthTokenEntry): void {
@@ -463,5 +603,9 @@ export function getOAuthToken(provider: string): OAuthTokenEntry | null {
 export function removeOAuthToken(provider: string): void {
   const tokens = loadOAuthTokens();
   delete tokens[provider];
-  saveOAuthTokens(tokens);
+  // Also remove from safeStorage
+  deleteSecret(`${OAUTH_SECRET_PREFIX}${provider}`);
+  // Persist updated index
+  saveOAuthProviderIndex(new Set(Object.keys(tokens)));
+  oauthTokensCache = tokens;
 }
