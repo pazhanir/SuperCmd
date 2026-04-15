@@ -626,6 +626,7 @@
       "pinExtension": "固定扩展",
       "unpinExtension": "取消固定扩展",
       "disableCommand": "禁用命令",
+      "copyDeeplink": "复制深层链接",
       "moveUp": "上移",
       "moveDown": "下移"
     },

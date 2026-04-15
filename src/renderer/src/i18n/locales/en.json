@@ -630,6 +630,7 @@
       "pinExtension": "Pin Extension",
       "unpinExtension": "Unpin Extension",
       "disableCommand": "Disable Command",
+      "copyDeeplink": "Copy Deeplink",
       "moveUp": "Move Up",
       "moveDown": "Move Down"
     },

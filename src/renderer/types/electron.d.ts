@@ -16,6 +16,10 @@ export interface CommandInfo {
   interval?: string;
   disabledByDefault?: boolean;
   needsConfirmation?: boolean;
+  /** Extension owner/author — used to build deeplinks for extension commands. */
+  owner?: string;
+  /** Script command slug — used to build deeplinks for script commands. */
+  slug?: string;
   /** Always shown at the top of the list, even during search. */
   alwaysOnTop?: boolean;
   commandArgumentDefinitions?: Array<{

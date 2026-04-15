@@ -1793,6 +1793,47 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // Build a deeplink for an extension or script command so the user can share
+  // or paste it. Uses the supercmd:// scheme so the registered protocol
+  // handler routes it back to the launcher when opened from outside the app.
+  //
+  // Extension form:
+  //   supercmd://extensions/<owner>/<extName>/<cmdName>  (when owner known)
+  //   supercmd://extensions/<extName>/<cmdName>          (fallback)
+  // Script form:
+  //   supercmd://script-commands/<slug>
+  const buildCommandDeeplink = useCallback((command: CommandInfo): string | null => {
+    if (command.category === 'extension') {
+      const rawPath = String(command.path || '').trim();
+      const separatorIndex = rawPath.indexOf('/');
+      if (separatorIndex <= 0 || separatorIndex >= rawPath.length - 1) return null;
+      const extName = rawPath.slice(0, separatorIndex).trim();
+      const cmdName = rawPath.slice(separatorIndex + 1).trim();
+      if (!extName || !cmdName) return null;
+      const owner = (command.owner || '').trim();
+      const segments = owner
+        ? [owner, extName, cmdName]
+        : [extName, cmdName];
+      return `supercmd://extensions/${segments.map(encodeURIComponent).join('/')}`;
+    }
+    if (command.category === 'script') {
+      const slug = (command.slug || '').trim();
+      if (!slug) return null;
+      return `supercmd://script-commands/${encodeURIComponent(slug)}`;
+    }
+    return null;
+  }, []);
+
+  const copyCommandDeeplink = useCallback(async (command: CommandInfo) => {
+    const deeplink = buildCommandDeeplink(command);
+    if (!deeplink) return;
+    try {
+      await window.electron.clipboardWrite({ text: deeplink });
+    } catch (error) {
+      console.error('Failed to copy command deeplink:', error);
+    }
+  }, [buildCommandDeeplink]);
+
   const showFileResultDetailsByPath = useCallback(
     (targetPath: string) => {
       if (!targetPath) return;
@@ -2699,6 +2740,9 @@ const App: React.FC = () => {
 
       const isPinned = pinnedCommands.includes(command.id);
       const pinnedIndex = pinnedCommands.indexOf(command.id);
+      const canCopyDeeplink =
+        (command.category === 'extension' || command.category === 'script') &&
+        buildCommandDeeplink(command) !== null;
       return [
         {
           id: 'open',
@@ -2715,6 +2759,13 @@ const App: React.FC = () => {
               : t('launcher.actions.pinCommand'),
           shortcut: 'Cmd+Shift+P',
           execute: () => pinToggleForCommand(command),
+        },
+        {
+          id: 'copy-deeplink',
+          title: t('launcher.actions.copyDeeplink'),
+          shortcut: 'Cmd+Shift+C',
+          enabled: canCopyDeeplink,
+          execute: () => copyCommandDeeplink(command),
         },
         {
           id: 'disable',
@@ -2757,6 +2808,8 @@ const App: React.FC = () => {
       showFileResultDetailsByPath,
       revealFileResultByPath,
       copyFileResultPath,
+      buildCommandDeeplink,
+      copyCommandDeeplink,
       fetchCommands,
       t,
     ]

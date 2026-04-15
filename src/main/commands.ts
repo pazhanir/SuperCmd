@@ -1740,6 +1740,7 @@ async function discoverAndBuildCommands(): Promise<CommandInfo[]> {
       mode: ext.mode,
       interval: ext.interval,
       disabledByDefault: ext.disabledByDefault,
+      owner: ext.owner,
       commandArgumentDefinitions: ext.commandArgumentDefinitions || [],
     }));
   } catch (e) {
@@ -1758,6 +1759,7 @@ async function discoverAndBuildCommands(): Promise<CommandInfo[]> {
       iconEmoji: script.iconEmoji,
       category: 'script' as const,
       path: script.scriptPath,
+      slug: script.slug,
       mode: script.mode,
       interval: script.interval,
       needsConfirmation: script.needsConfirmation,

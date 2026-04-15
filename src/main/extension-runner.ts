@@ -84,6 +84,7 @@ export interface ExtensionCommandInfo {
   extensionTitle: string;
   extName: string;
   cmdName: string;
+  owner?: string;
   description: string;
   mode: string;
   interval?: string;
@@ -292,6 +293,8 @@ export function discoverInstalledExtensionCommands(): ExtensionCommandInfo[] {
         extPath,
         pkg.icon || 'icon.png'
       );
+      const ownerRaw = pkg.owner || pkg.author || '';
+      const owner = typeof ownerRaw === 'object' ? ownerRaw.name || '' : String(ownerRaw || '');
 
       for (const cmd of pkg.commands || []) {
         if (!cmd.name) continue;
@@ -302,6 +305,7 @@ export function discoverInstalledExtensionCommands(): ExtensionCommandInfo[] {
           extensionTitle: pkg.title || extName,
           extName,
           cmdName: cmd.name,
+          owner,
           description: cmd.description || '',
           mode: cmd.mode || 'view',
           interval: typeof cmd.interval === 'string' ? cmd.interval : undefined,

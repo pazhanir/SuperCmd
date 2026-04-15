@@ -6146,6 +6146,28 @@ app.on('open-url', (event: any, url: string) => {
         return;
       }
     }
+    // Command deeplinks copied from the launcher's "Copy Deeplink" action:
+    //   supercmd://extensions/<owner>/<ext>/<command>
+    //   supercmd://script-commands/<slug>
+    // Forward into the existing open-url IPC handler, which already resolves
+    // both raycast:// and supercmd:// via parseRaycastDeepLink.
+    if (
+      parsed.protocol === 'supercmd:' &&
+      (parsed.hostname === 'extensions' || parsed.hostname === 'script-commands')
+    ) {
+      void (async () => {
+        try {
+          await showWindow();
+          await mainWindow?.webContents.executeJavaScript(
+            `window.electron.openUrl(${JSON.stringify(url)});`,
+            true
+          );
+        } catch (e) {
+          console.error(`[open-url] Failed to forward supercmd command deeplink: ${url}`, e);
+        }
+      })();
+      return;
+    }
   } catch {
     // not a valid URL, fall through to OAuth
   }
@@ -6349,10 +6371,24 @@ type ParsedRaycastDeepLink =
       arguments: string[];
     };
 
+function isCommandDeeplinkUrl(url: string): boolean {
+  // Matches both the raycast:// scheme (extensions using createDeeplink) and
+  // supercmd://extensions/... / supercmd://script-commands/... (copy-deeplink
+  // from the launcher). Note: supercmd://notes/* and supercmd://canvas/* are
+  // handled elsewhere in app.on('open-url').
+  if (url.startsWith('raycast://')) return true;
+  if (url.startsWith('supercmd://extensions/')) return true;
+  if (url.startsWith('supercmd://script-commands/')) return true;
+  return false;
+}
+
 function parseRaycastDeepLink(url: string): ParsedRaycastDeepLink | null {
   try {
     const parsed = new URL(url);
-    if (parsed.protocol !== 'raycast:') return null;
+    // Accept both the Raycast-compatible scheme (used by extension code via
+    // createDeeplink) and SuperCmd's own scheme (used by "Copy Deeplink" so
+    // that pasted URLs are handled by the registered supercmd:// protocol).
+    if (parsed.protocol !== 'raycast:' && parsed.protocol !== 'supercmd:') return null;
 
     const parts = parsed.pathname.split('/').filter(Boolean).map((v) => decodeURIComponent(v));
 
@@ -11807,10 +11843,10 @@ app.whenReady().then(async () => {
     if (!rawTarget) return false;
     const appName = typeof application === 'string' ? application.trim() : '';
 
-    if (rawTarget.startsWith('raycast://')) {
+    if (isCommandDeeplinkUrl(rawTarget)) {
       const deepLink = parseRaycastDeepLink(rawTarget);
       if (!deepLink) {
-        console.warn(`Unsupported Raycast deep link: ${rawTarget}`);
+        console.warn(`Unsupported command deep link: ${rawTarget}`);
         return false;
       }
 

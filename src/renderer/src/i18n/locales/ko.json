@@ -626,6 +626,7 @@
       "pinExtension": "확장 고정",
       "unpinExtension": "확장 고정 해제",
       "disableCommand": "명령 비활성화",
+      "copyDeeplink": "딥링크 복사",
       "moveUp": "위로 이동",
       "moveDown": "아래로 이동"
     },
