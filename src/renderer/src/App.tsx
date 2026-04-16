@@ -4076,26 +4076,27 @@ const App: React.FC = () => {
                                   {commandAlias}
                                 </div>
                               ) : null}
+                              {hotkeyParts.length > 0 ? (
+                                <span className="inline-flex items-center gap-0.5 flex-shrink-0">
+                                  {hotkeyParts.map((part, idx) => (
+                                    <kbd key={idx} className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded bg-[var(--kbd-bg)] px-1 text-[10px] font-medium text-[var(--text-muted)]">
+                                      {part}
+                                    </kbd>
+                                  ))}
+                                </span>
+                              ) : null}
                             </div>
                             {typeBadgeLabel ? (
                               <div className="text-[var(--text-muted)] text-[0.6875rem] font-medium leading-none flex-shrink-0 truncate">
                                 {typeBadgeLabel}
                               </div>
                             ) : null}
-                            {hotkeyParts.length > 0 ? (
-                              <span className="inline-flex items-center gap-0.5 flex-shrink-0">
-                                {hotkeyParts.map((part, idx) => (
-                                  <kbd key={idx} className="inline-flex items-center justify-center min-w-[18px] h-[18px] rounded bg-[var(--kbd-bg)] px-1 text-[10px] font-medium text-[var(--text-muted)]">
-                                    {part}
-                                  </kbd>
-                                ))}
-                              </span>
-                            ) : flatIndex < 9 ? (
+                            {flatIndex < 9 && (
                               <span className="inline-flex items-center gap-0.5 flex-shrink-0">
                                 <kbd className="inline-flex items-center justify-center w-[18px] h-[18px] rounded bg-[var(--kbd-bg)] text-[10px] font-medium text-[var(--text-muted)]">⌘</kbd>
                                 <kbd className="inline-flex items-center justify-center w-[18px] h-[18px] rounded bg-[var(--kbd-bg)] text-[10px] font-medium text-[var(--text-muted)]">{flatIndex + 1}</kbd>
                               </span>
-                            ) : null}
+                            )}
                           </div>
                         </div>
                       );
