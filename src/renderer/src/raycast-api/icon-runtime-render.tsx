@@ -7,28 +7,53 @@ import React, { useEffect, useState } from 'react';
 import { isRaycastIconName, renderPhosphorIcon } from './icon-runtime-phosphor';
 import { isEmojiOrSymbol, renderTintedAssetIcon, resolveIconSrc, resolveTintColor } from './icon-runtime-assets';
 
+// LRU cache for file icon data URLs. Each entry is a ~20 KB base64 PNG,
+// so bounding entries bounds heap growth. JS Map preserves insertion
+// order, which lets us evict the least-recently-used entry in O(1).
+const FILE_ICON_CACHE_MAX = 300;
 const fileIconCache = new Map<string, string | null>();
 
+function fileIconCacheGet(filePath: string): { hit: boolean; value: string | null } {
+  if (!fileIconCache.has(filePath)) return { hit: false, value: null };
+  const value = fileIconCache.get(filePath) ?? null;
+  // Refresh recency: delete and reinsert so it becomes the newest entry.
+  fileIconCache.delete(filePath);
+  fileIconCache.set(filePath, value);
+  return { hit: true, value };
+}
+
+function fileIconCacheSet(filePath: string, value: string | null): void {
+  if (fileIconCache.has(filePath)) {
+    fileIconCache.delete(filePath);
+  }
+  fileIconCache.set(filePath, value);
+  while (fileIconCache.size > FILE_ICON_CACHE_MAX) {
+    const oldestKey = fileIconCache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    fileIconCache.delete(oldestKey);
+  }
+}
+
 function FileIcon({ filePath, className }: { filePath: string; className: string }) {
-  const [src, setSrc] = useState<string | null>(() => fileIconCache.get(filePath) ?? null);
+  const [src, setSrc] = useState<string | null>(() => fileIconCacheGet(filePath).value);
 
   useEffect(() => {
     let cancelled = false;
-    const cached = fileIconCache.get(filePath);
-    if (cached !== undefined) {
-      setSrc(cached);
+    const cached = fileIconCacheGet(filePath);
+    if (cached.hit) {
+      setSrc(cached.value);
       return;
     }
 
     (window as any).electron?.getFileIconDataUrl?.(filePath, 20)
       .then((iconSrc: string | null) => {
         if (cancelled) return;
-        fileIconCache.set(filePath, iconSrc || null);
+        fileIconCacheSet(filePath, iconSrc || null);
         setSrc(iconSrc || null);
       })
       .catch(() => {
         if (cancelled) return;
-        fileIconCache.set(filePath, null);
+        fileIconCacheSet(filePath, null);
         setSrc(null);
       });
 
