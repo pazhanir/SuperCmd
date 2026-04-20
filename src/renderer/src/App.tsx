@@ -7,7 +7,8 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Sparkles, ArrowRight, CornerDownLeft, ExternalLink, Plus, Pencil, Files, Trash2 } from 'lucide-react';
+import { X, Sparkles, ArrowRight, ArrowDown, CornerDownLeft, ExternalLink, Plus, Pencil, Files, Trash2 } from 'lucide-react';
+import supercmdLogo from '../../../supercmd.png';
 import type {
   CommandInfo,
   ExtensionBundle,
@@ -348,6 +349,8 @@ const App: React.FC = () => {
   >({});
   const [launcherFileResults, setLauncherFileResults] = useState<IndexedFileSearchResult[]>([]);
   const [disableFileSearchResults, setDisableFileSearchResults] = useState(false);
+  const [launcherViewMode, setLauncherViewMode] = useState<'expanded' | 'compact'>('expanded');
+  const [isCompactCollapsed, setIsCompactCollapsed] = useState(true);
   const [launcherFileIcons, setLauncherFileIcons] = useState<Record<string, string>>({});
   const [fileIsDirectoryMap, setFileIsDirectoryMap] = useState<Record<string, boolean>>({});
   const [launcherFooterStatus, setLauncherFooterStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -609,6 +612,7 @@ const App: React.FC = () => {
         )
       );
       setDisableFileSearchResults(Boolean(settings.disableFileSearchResults));
+      setLauncherViewMode(settings.launcherViewMode || 'expanded');
       applyAppFontSize(settings.fontSize);
       applyUiStyle(settings.uiStyle || 'default');
       applyBaseColor(settings.baseColor || '#101113');
@@ -753,6 +757,11 @@ const App: React.FC = () => {
         return;
       }
       if (routedSystemCommandId) {
+        // Launching directly into a command/extension via hotkey should bypass
+        // compact mode — expand the launcher so the command UI is visible
+        // instead of the compact search-only chrome.
+        setIsCompactCollapsed(false);
+        window.electron.resizeLauncherWindow(true);
         whisperSessionRef.current = false;
         setShowCursorPrompt(false);
         setShowWhisperHint(false);
@@ -892,6 +901,15 @@ const App: React.FC = () => {
       }
       setSearchQuery(pendingQuery ?? '');
       setSelectedIndex(0);
+      // When a pending query is pre-filled (e.g. hotkey-triggered no-view
+      // command with missing args), expand out of compact so results are
+      // immediately visible.
+      if (pendingQuery) {
+        setIsCompactCollapsed(false);
+        window.electron.resizeLauncherWindow(true);
+      } else {
+        setIsCompactCollapsed(true);
+      }
       exitAiMode();
       setShowClipboardManager(false);
       setShowSnippetManager(null);
@@ -1022,6 +1040,9 @@ const App: React.FC = () => {
       }
 
       if (shouldOpenCommandSetup(hydrated)) {
+        // Launching into a setup form via hotkey must bypass compact mode.
+        setIsCompactCollapsed(false);
+        window.electron.resizeLauncherWindow(true);
         setShowFileSearch(false);
         setExtensionPreferenceSetup({
           bundle: hydrated,
@@ -1031,6 +1052,11 @@ const App: React.FC = () => {
       } else if (hydrated.mode === 'no-view') {
         queueNoViewBundleRun(hydrated, 'userInitiated');
       } else {
+        // Launching directly into a view/form command via hotkey must bypass
+        // compact mode so the extension UI is visible instead of the compact
+        // search-only chrome.
+        setIsCompactCollapsed(false);
+        window.electron.resizeLauncherWindow(true);
         setShowFileSearch(false);
         setExtensionView(hydrated);
       }
@@ -2235,6 +2261,11 @@ const App: React.FC = () => {
 
         case 'ArrowDown':
           e.preventDefault();
+          if (launcherViewMode === 'compact' && isCompactCollapsed) {
+            setIsCompactCollapsed(false);
+            window.electron.resizeLauncherWindow(true);
+            break;
+          }
           moveSelection('down');
           break;
 
@@ -2271,6 +2302,15 @@ const App: React.FC = () => {
           if (searchQuery.length > 0) {
             setSearchQuery('');
             setSelectedIndex(0);
+            if (launcherViewMode === 'compact') {
+              setIsCompactCollapsed(true);
+              window.electron.resizeLauncherWindow(false);
+            }
+            return;
+          }
+          if (launcherViewMode === 'compact' && !isCompactCollapsed) {
+            setIsCompactCollapsed(true);
+            window.electron.resizeLauncherWindow(false);
             return;
           }
           window.electron.hideWindow();
@@ -2304,6 +2344,8 @@ const App: React.FC = () => {
       contextMenu,
       showActions,
       quickLinkDynamicPrompt,
+      launcherViewMode,
+      isCompactCollapsed,
     ]
   );
 
@@ -3775,7 +3817,19 @@ const App: React.FC = () => {
                 type="text"
                 placeholder={aiMode ? t('launcher.aiMode.placeholder') : t('launcher.searchPlaceholder')}
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setSearchQuery(value);
+                  if (launcherViewMode === 'compact') {
+                    if (isCompactCollapsed && value.length > 0) {
+                      setIsCompactCollapsed(false);
+                      window.electron.resizeLauncherWindow(true);
+                    } else if (!isCompactCollapsed && value.length === 0) {
+                      setIsCompactCollapsed(true);
+                      window.electron.resizeLauncherWindow(false);
+                    }
+                  }
+                }}
                 onBlur={handleLauncherSearchBlur}
                 onKeyDown={handleKeyDown}
                 className="launcher-search-input min-w-0 w-full bg-transparent border-none outline-none text-[var(--text-primary)] placeholder:text-[color:var(--text-muted)] placeholder:font-medium text-[0.9375rem] font-medium tracking-[0.005em]"
@@ -3905,10 +3959,32 @@ const App: React.FC = () => {
           </div>
         </div>
 
+        {/* Compact mode: Show More row */}
+        {launcherViewMode === 'compact' && isCompactCollapsed && (
+          <div
+            className="flex items-center justify-between px-4 py-2 cursor-pointer hover:bg-[var(--ui-segment-hover-bg)] transition-colors border-t border-[var(--ui-divider)]"
+            onClick={() => {
+              setIsCompactCollapsed(false);
+              window.electron.resizeLauncherWindow(true);
+            }}
+          >
+            <div className="flex items-center gap-2 text-[var(--text-muted)]">
+              <img src={supercmdLogo} alt="SuperCmd" className="w-4 h-4" />
+            </div>
+            <div className="flex items-center gap-1.5 text-[var(--text-muted)]">
+              <span className="text-xs font-medium">{t('launcher.compact.showMore')}</span>
+              <kbd className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded bg-[var(--kbd-bg)] text-[var(--text-subtle)]">
+                <ArrowDown className="w-3 h-3" />
+              </kbd>
+            </div>
+          </div>
+        )}
+
         {/* Command list */}
         <div
           ref={listRef}
           className="flex-1 overflow-y-auto custom-scrollbar p-1.5 list-area"
+          style={launcherViewMode === 'compact' && isCompactCollapsed ? { display: 'none' } : undefined}
         >
           {isLoading ? (
             <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
@@ -4114,7 +4190,7 @@ const App: React.FC = () => {
         </div>
         
         {/* Footer actions */}
-        {!isLoading && (
+        {!isLoading && !(launcherViewMode === 'compact' && isCompactCollapsed) && (
           <div
             className="sc-glass-footer sc-launcher-footer absolute bottom-0 left-0 right-0 z-10 flex items-center px-4 py-2.5"
           >
