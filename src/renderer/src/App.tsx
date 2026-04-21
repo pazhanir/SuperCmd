@@ -357,6 +357,7 @@ const App: React.FC = () => {
   const launcherFooterStatusTimerRef = useRef<number | null>(null);
   const [fileSearchInitialDetailPath, setFileSearchInitialDetailPath] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [navigationStyle, setNavigationStyle] = useState<'vim' | 'macos'>('vim');
   const [isLoading, setIsLoading] = useState(true);
   const homeDir = String((window.electron as any).homeDir || '');
   const {
@@ -616,6 +617,7 @@ const App: React.FC = () => {
       applyAppFontSize(settings.fontSize);
       applyUiStyle(settings.uiStyle || 'default');
       applyBaseColor(settings.baseColor || '#101113');
+      setNavigationStyle(settings.navigationStyle === 'macos' ? 'macos' : 'vim');
       const shouldShowOnboarding = !settings.hasSeenOnboarding;
       setShowOnboarding(shouldShowOnboarding);
       setOnboardingRequiresShortcutFix(shouldShowOnboarding && !shortcutStatus.ok);
@@ -953,6 +955,7 @@ const App: React.FC = () => {
       );
       setLauncherShortcut(settings.globalShortcut || 'Alt+Space');
       setDisableFileSearchResults(Boolean(settings.disableFileSearchResults));
+      setNavigationStyle(settings.navigationStyle === 'macos' ? 'macos' : 'vim');
     });
     return cleanup;
   }, []);
@@ -2142,19 +2145,6 @@ const App: React.FC = () => {
         return;
       }
 
-      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-        if (e.key === 'j' || e.key === 'J') {
-          e.preventDefault();
-          moveSelection('down');
-          return;
-        }
-        if (e.key === 'k' || e.key === 'K') {
-          e.preventDefault();
-          moveSelection('up');
-          return;
-        }
-      }
-
       if (showActions || contextMenu) {
         if (e.key === 'Escape') {
           e.preventDefault();
@@ -2764,6 +2754,33 @@ const App: React.FC = () => {
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [cancelQuickLinkDynamicPrompt, quickLinkDynamicPrompt, submitQuickLinkDynamicPrompt]);
+
+  // Global nav-key rebinding — works in the main launcher AND inside
+  // extensions. Ctrl+<key> is translated into a synthetic arrow key event
+  // dispatched at the original target so whichever component handles arrow
+  // keys (list, grid, submenu, text input) picks it up naturally.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      const keyLower = event.key.toLowerCase();
+      const navMap: Record<string, 'ArrowDown' | 'ArrowUp' | 'ArrowLeft' | 'ArrowRight'> =
+        navigationStyle === 'vim'
+          ? { j: 'ArrowDown', k: 'ArrowUp', h: 'ArrowLeft', l: 'ArrowRight' }
+          : { n: 'ArrowDown', p: 'ArrowUp', b: 'ArrowLeft', f: 'ArrowRight' };
+      const mapped = navMap[keyLower];
+      if (!mapped) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const target =
+        (event.target as HTMLElement | null) ||
+        (document.activeElement as HTMLElement | null);
+      target?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: mapped, bubbles: true, cancelable: true })
+      );
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [navigationStyle]);
 
   const handleCommandExecute = async (command: CommandInfo) => {
     try {
