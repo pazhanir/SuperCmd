@@ -582,6 +582,19 @@
     "advanced": {
       "title": "高级",
       "loading": "正在加载高级设置...",
+      "disableFileSearch": {
+        "title": "禁用文件和文件夹搜索",
+        "description": "从主启动器搜索中隐藏文件和文件夹结果。",
+        "label": "禁用文件和文件夹搜索结果"
+      },
+      "navigationStyle": {
+        "title": "导航样式",
+        "description": "选择在启动器中上下左右导航的键盘快捷键。",
+        "option": {
+          "vim": "Vim 样式 (^J, ^K, ^H, ^L)",
+          "macos": "macOS 样式 (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "剪贴板历史保留期限",
         "description": "自动删除超过所选时长的剪贴板条目。已固定的条目始终保留。",

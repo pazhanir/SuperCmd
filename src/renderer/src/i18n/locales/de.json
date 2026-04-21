@@ -544,6 +544,19 @@
     },
     "advanced": {
       "title": "Erweiterte Einstellungen",
+      "disableFileSearch": {
+        "title": "Datei- und Ordnersuche deaktivieren",
+        "description": "Datei- und Ordnerergebnisse in der Hauptsuche des Launchers ausblenden.",
+        "label": "Suchergebnisse für Dateien und Ordner deaktivieren"
+      },
+      "navigationStyle": {
+        "title": "Navigationsstil",
+        "description": "Wählen Sie die Tastenkürzel für die Navigation nach oben, unten, links und rechts im Launcher.",
+        "option": {
+          "vim": "Vim-Stil (^J, ^K, ^H, ^L)",
+          "macos": "macOS-Stil (^N, ^P, ^B, ^F)"
+        }
+      },
       "developerMode": {
         "label": "Entwicklermodus",
         "description": "Debug-Funktionen für die Erweiterungsentwicklung aktivieren"

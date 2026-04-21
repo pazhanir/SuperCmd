@@ -582,6 +582,19 @@
     "advanced": {
       "title": "詳細",
       "loading": "詳細設定を読み込み中...",
+      "disableFileSearch": {
+        "title": "ファイルとフォルダ検索を無効化",
+        "description": "メインランチャー検索からファイルとフォルダの結果を非表示にします。",
+        "label": "ファイルとフォルダの検索結果を無効化"
+      },
+      "navigationStyle": {
+        "title": "ナビゲーションスタイル",
+        "description": "ランチャー内で上下左右に移動するためのキーボードショートカットを選択します。",
+        "option": {
+          "vim": "Vim スタイル (^J, ^K, ^H, ^L)",
+          "macos": "macOS スタイル (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "クリップボード履歴の保持期間",
         "description": "選択した期間より古いクリップボードの項目を自動的に削除します。固定された項目は常に保持されます。",

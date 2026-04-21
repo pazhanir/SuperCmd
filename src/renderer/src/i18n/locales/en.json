@@ -582,6 +582,19 @@
     "advanced": {
       "title": "Advanced",
       "loading": "Loading advanced settings...",
+      "disableFileSearch": {
+        "title": "Disable File & Folder Search",
+        "description": "Hide file and folder results from the main launcher search.",
+        "label": "Disable file and folder search results"
+      },
+      "navigationStyle": {
+        "title": "Navigation Style",
+        "description": "Choose the keyboard shortcuts for navigating up, down, left, and right in the launcher.",
+        "option": {
+          "vim": "Vim Style (^J, ^K, ^H, ^L)",
+          "macos": "macOS Style (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "Clipboard History Retention",
         "description": "Auto-delete clipboard entries older than the selected duration. Pinned entries are always kept.",

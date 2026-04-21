@@ -582,6 +582,19 @@
     "advanced": {
       "title": "進階",
       "loading": "正在載入進階設定...",
+      "disableFileSearch": {
+        "title": "停用檔案與資料夾搜尋",
+        "description": "在主啟動器搜尋中隱藏檔案與資料夾結果。",
+        "label": "停用檔案與資料夾搜尋結果"
+      },
+      "navigationStyle": {
+        "title": "導覽樣式",
+        "description": "選擇在啟動器中向上、向下、向左與向右導覽的鍵盤快捷鍵。",
+        "option": {
+          "vim": "Vim 樣式 (^J, ^K, ^H, ^L)",
+          "macos": "macOS 樣式 (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "剪貼簿歷史保留期限",
         "description": "自動刪除超過所選時長的剪貼簿項目。已釘選的項目會一直保留。",

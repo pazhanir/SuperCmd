@@ -55,9 +55,9 @@ const CAPS_LOCK_TAP_OPTIONS: { value: HyperKeyCapsLockTapBehavior; label: string
   { value: 'toggle', label: 'Toggles Caps Lock' },
 ];
 
-const NAVIGATION_STYLE_OPTIONS: { value: AppNavigationStyle; label: string }[] = [
-  { value: 'vim', label: 'Vim Style (^J, ^K, ^H, ^L)' },
-  { value: 'macos', label: 'macOS Style (^N, ^P, ^B, ^F)' },
+const NAVIGATION_STYLE_OPTIONS: { value: AppNavigationStyle; labelKey: string }[] = [
+  { value: 'vim', labelKey: 'settings.advanced.navigationStyle.option.vim' },
+  { value: 'macos', labelKey: 'settings.advanced.navigationStyle.option.macos' },
 ];
 
 // `null` means "never prune" — represented in the <select> as the literal string "never".
@@ -211,8 +211,8 @@ const AdvancedTab: React.FC = () => {
 
         <SettingsRow
           icon={<FolderSearch className="w-4 h-4" />}
-          title="Disable File & Folder Search"
-          description="Hide file and folder results from the main launcher search."
+          title={t('settings.advanced.disableFileSearch.title')}
+          description={t('settings.advanced.disableFileSearch.description')}
         >
           <label className="inline-flex items-center gap-2.5 text-[13px] text-white/85 cursor-pointer">
             <input
@@ -223,14 +223,14 @@ const AdvancedTab: React.FC = () => {
               }}
               className="settings-checkbox"
             />
-            Disable file and folder search results
+            {t('settings.advanced.disableFileSearch.label')}
           </label>
         </SettingsRow>
 
         <SettingsRow
           icon={<Keyboard className="w-4 h-4" />}
-          title="Navigation Style"
-          description="Choose the keyboard shortcuts for navigating up, down, left, and right in the launcher."
+          title={t('settings.advanced.navigationStyle.title')}
+          description={t('settings.advanced.navigationStyle.description')}
         >
           <div className="w-full max-w-[320px]">
             <select
@@ -242,7 +242,7 @@ const AdvancedTab: React.FC = () => {
             >
               {NAVIGATION_STYLE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
-                  {opt.label}
+                  {t(opt.labelKey)}
                 </option>
               ))}
             </select>

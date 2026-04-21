@@ -582,6 +582,19 @@
     "advanced": {
       "title": "고급",
       "loading": "고급 설정을 불러오는 중...",
+      "disableFileSearch": {
+        "title": "파일 및 폴더 검색 비활성화",
+        "description": "기본 런처 검색에서 파일 및 폴더 결과를 숨깁니다.",
+        "label": "파일 및 폴더 검색 결과 비활성화"
+      },
+      "navigationStyle": {
+        "title": "탐색 스타일",
+        "description": "런처에서 위, 아래, 왼쪽, 오른쪽으로 이동하는 키보드 단축키를 선택합니다.",
+        "option": {
+          "vim": "Vim 스타일 (^J, ^K, ^H, ^L)",
+          "macos": "macOS 스타일 (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "클립보드 기록 보존 기간",
         "description": "선택한 기간보다 오래된 클립보드 항목을 자동으로 삭제합니다. 고정된 항목은 항상 유지됩니다.",

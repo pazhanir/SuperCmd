@@ -582,6 +582,19 @@
     "advanced": {
       "title": "Avanzate",
       "loading": "Caricamento impostazioni avanzate...",
+      "disableFileSearch": {
+        "title": "Disattiva ricerca di file e cartelle",
+        "description": "Nascondi i risultati di file e cartelle dalla ricerca principale del launcher.",
+        "label": "Disattiva risultati di ricerca di file e cartelle"
+      },
+      "navigationStyle": {
+        "title": "Stile di navigazione",
+        "description": "Scegli le scorciatoie da tastiera per navigare in alto, in basso, a sinistra e a destra nel launcher.",
+        "option": {
+          "vim": "Stile Vim (^J, ^K, ^H, ^L)",
+          "macos": "Stile macOS (^N, ^P, ^B, ^F)"
+        }
+      },
       "clipboardRetention": {
         "title": "Conservazione cronologia appunti",
         "description": "Elimina automaticamente le voci degli appunti più vecchie della durata selezionata. Le voci fissate vengono sempre conservate.",

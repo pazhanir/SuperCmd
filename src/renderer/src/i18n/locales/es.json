@@ -544,6 +544,19 @@
     },
     "advanced": {
       "title": "Configuración avanzada",
+      "disableFileSearch": {
+        "title": "Desactivar búsqueda de archivos y carpetas",
+        "description": "Ocultar los resultados de archivos y carpetas de la búsqueda principal del lanzador.",
+        "label": "Desactivar resultados de búsqueda de archivos y carpetas"
+      },
+      "navigationStyle": {
+        "title": "Estilo de navegación",
+        "description": "Elige los atajos de teclado para navegar arriba, abajo, izquierda y derecha en el lanzador.",
+        "option": {
+          "vim": "Estilo Vim (^J, ^K, ^H, ^L)",
+          "macos": "Estilo macOS (^N, ^P, ^B, ^F)"
+        }
+      },
       "developerMode": {
         "label": "Modo desarrollador",
         "description": "Habilitar funciones de depuración para el desarrollo de extensiones"
