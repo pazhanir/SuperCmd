@@ -97,11 +97,6 @@ export function createFormRuntime(deps: FormRuntimeDeps) {
 
     useEffect(() => {
       const handler = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          pop();
-          return;
-        }
         if (isMetaK(event)) {
           event.preventDefault();
           setShowActions((value) => !value);
@@ -123,7 +118,7 @@ export function createFormRuntime(deps: FormRuntimeDeps) {
 
       window.addEventListener('keydown', handler);
       return () => window.removeEventListener('keydown', handler);
-    }, [formActions, isMetaK, matchesShortcut, pop, primaryAction]);
+    }, [formActions, isMetaK, matchesShortcut, primaryAction]);
 
     const contextValue = useMemo(() => ({ values, setValue, errors, setError }), [errors, setError, setValue, values]);
     const handleActionExecute = useCallback((action: ExtractedAction) => {

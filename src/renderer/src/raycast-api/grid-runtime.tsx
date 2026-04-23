@@ -174,12 +174,11 @@ export function createGridRuntime(deps: GridRuntimeDeps) {
         else if (event.key === 'ArrowDown') setSelectedIdx((value) => Math.min(value + cols, filteredItems.length - 1));
         else if (event.key === 'ArrowUp') setSelectedIdx((value) => Math.max(value - cols, 0));
         else if (event.key === 'Enter' && !event.repeat) primaryAction?.execute();
-        else if (event.key === 'Escape') pop();
         else return;
 
         event.preventDefault();
       },
-      [cols, filteredItems.length, isMetaK, matchesShortcut, pop, primaryAction, selectedActions, showActions],
+      [cols, filteredItems.length, isMetaK, matchesShortcut, primaryAction, selectedActions, showActions],
     );
 
     useEffect(() => {

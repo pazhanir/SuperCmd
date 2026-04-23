@@ -191,11 +191,10 @@ export function createListRuntime(deps: ListRuntimeDeps) {
       else if (event.key === 'ArrowDown') setSelectedIdx((value) => Math.min(value + (shouldUseEmojiGridValue ? 8 : 1), filteredItems.length - 1));
       else if (event.key === 'ArrowUp') setSelectedIdx((value) => Math.max(value - (shouldUseEmojiGridValue ? 8 : 1), 0));
       else if (event.key === 'Enter' && !event.repeat) primaryAction?.execute();
-      else if (event.key === 'Escape') pop();
       else return;
 
       event.preventDefault();
-    }, [filteredItems.length, isMetaK, matchesShortcut, pop, primaryAction, selectedActions, shouldUseEmojiGridValue, showActions]);
+    }, [filteredItems.length, isMetaK, matchesShortcut, primaryAction, selectedActions, shouldUseEmojiGridValue, showActions]);
 
     useEffect(() => {
       const handler = (event: KeyboardEvent) => {

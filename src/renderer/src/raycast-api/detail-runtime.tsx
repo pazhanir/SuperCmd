@@ -111,7 +111,6 @@ export function createDetailRuntime(deps: CreateDetailRuntimeDeps) {
 
     useEffect(() => {
       const handler = (event: KeyboardEvent) => {
-        if (event.key === 'Escape') { event.preventDefault(); pop(); return; }
         if (deps.isMetaK(event)) { event.preventDefault(); setShowActions((prev) => !prev); return; }
         if (event.key === 'Enter' && event.metaKey && !event.repeat && primaryAction) { event.preventDefault(); primaryAction.execute(); return; }
         if (!event.repeat) {
@@ -126,7 +125,7 @@ export function createDetailRuntime(deps: CreateDetailRuntimeDeps) {
       };
       window.addEventListener('keydown', handler);
       return () => window.removeEventListener('keydown', handler);
-    }, [detailActions, pop, primaryAction]);
+    }, [detailActions, primaryAction]);
 
     const handleActionExecute = useCallback((action: ExtractedActionLike) => {
       setShowActions(false);
